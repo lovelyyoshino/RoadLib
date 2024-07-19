@@ -87,6 +87,9 @@ inline Vector3d m2rv(const Matrix3d& Cnb)
 	return Vector3d(q1, q2, q3)*f;
 }
 
+/// @brief 将欧拉角转换为旋转矩阵
+/// @param att 欧拉角
+/// @return 
 inline Matrix3d a2mat(const Vector3d& att)
 {
 	//double sy = sin(att(0)), cy = cos(att(0));
@@ -104,6 +107,9 @@ inline Matrix3d a2mat(const Vector3d& att)
 	return m;
 }
 
+/// @brief 将旋转矩阵转换为欧拉角
+/// @param m 旋转矩阵
+/// @return 
 inline Vector3d m2att(const Matrix3d& m)
 {
 	Vector3d att;
@@ -225,6 +231,9 @@ inline int xyz2neu(const double* XYZ, const double* XYZ_Ref, double* neu)
 	return 1;
 }
 
+/// @brief 计算Rne矩阵，将一个点的XYZ坐标转换为NEU旋转矩阵
+/// @param xyz xyz位置信息
+/// @return 
 inline Eigen::Matrix3d calcRne(Eigen::Vector3d xyz)
 {
 	double XYZ_Ref[3] = { xyz(0),xyz(1),xyz(2) };
@@ -297,6 +306,7 @@ public:
 //	}
 //};
 
+/// @brief ceres优化时候的参数信息，包含时间，姿态，位置，以及对应原始量信息
 struct t_graphpose
 {
 	double time;

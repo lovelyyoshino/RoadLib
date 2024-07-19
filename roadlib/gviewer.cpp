@@ -71,16 +71,18 @@ int m_height = 0;
 
 map<char, int> m_text_call_map;
 
+/// @brief 这是gviewer类的构造函数
 gviewer::gviewer()
 {
 	t = nullptr;
 	gviewer::vptr.push_back(this);
 
-	mv_trajectory.resize(1);
-	mv_frames.resize(1);
-	mv_pointCloud.resize(1);
+	mv_trajectory.resize(1);//初始化轨迹
+	mv_frames.resize(1);//初始化帧
+	mv_pointCloud.resize(1);//初始化点云
 }
 
+/// @brief 析构函数
 gviewer::~gviewer()
 {
 	gviewer::vptr.erase(std::find(gviewer::vptr.begin(), gviewer::vptr.end() - 1, this));
@@ -96,12 +98,19 @@ gviewer::~gviewer()
 //	return nullptr;
 // }
 
+/// @brief 回调函数，用于设置OpenGL视口大小，并更新类成员变量
+/// @param window OpenGL 窗口大小
+/// @param width 宽度
+/// @param height 高度
 void framebuffer_size_callback(GLFWwindow *window, int width, int height)
 {
 	glViewport(0, 0, width, height);
 	m_width = width;
 	m_height = height;
 }
+/// @brief 错误回调函数，用于输出错误信息
+/// @param error 错误码
+/// @param msg 错误信息
 void error_callback(int error, const char *msg)
 {
 	std::string s;
@@ -109,6 +118,7 @@ void error_callback(int error, const char *msg)
 	std::cerr << s << std::endl;
 }
 
+/// @brief 主要的运行函数，包含了OpenGL的初始化、绘制循环以及一些交互逻辑。在函数中，会初始化OpenGL窗口、设置回调函数、绘制UI、模型等内容，并在循环中不断更新视图
 void gviewer::Run()
 {
 	/* Initialize the library */
@@ -519,6 +529,7 @@ void gviewer::Run()
 	// delete window;
 }
 
+/// @brief 清空视图，清除存储的轨迹和点云数据
 void gviewer::ClearView()
 {
 	unique_lock<mutex> lock(m_mutex);
@@ -526,6 +537,8 @@ void gviewer::ClearView()
 	mv_pointCloud.clear();
 }
 
+/// @brief 设置帧数据
+/// @param f 帧数据
 void gviewer::SetFrames(const Frames &f)
 {
 	unique_lock<mutex> lock(m_mutex);
@@ -533,49 +546,61 @@ void gviewer::SetFrames(const Frames &f)
 	mv_frames.push_back(f);
 }
 
+/// @brief 设置点云数据
+/// @param pc 对应的点云信息
 void gviewer::SetPointCloud(const VPointCloud &pc)
 {
 	unique_lock<mutex> lock(m_mutex);
 	mv_pointCloud.clear();
 	mv_pointCloud.push_back(pc);
 }
-
+/// @brief 设置帧数据
+/// @param vf 帧数据队列
 void gviewer::SetFrames(const vector<Frames> &vf)
 {
 	unique_lock<mutex> lock(m_mutex);
 	mv_frames = vf;
 }
 
+/// @brief 添加新的帧数据
+/// @param f 新的帧数据
 void gviewer::AddNewFrame(const pair<Eigen::Matrix3d, Eigen::Vector3d> &f)
 {
 	unique_lock<mutex> lock(m_mutex);
 	mv_frames.back().push_back(f);
 }
 
+/// @brief 设置点云数据
+/// @param vpc 新的点云数据
 void gviewer::SetPointCloud(const vector<VPointCloud> &vpc)
 {
 	unique_lock<mutex> lock(m_mutex);
 	mv_pointCloud = vpc;
 }
 
+/// @brief 设置语义点云数据
+/// @param vpc 新的语义点云数据
 void gviewer::SetPointCloudSemantic(const vector<VPointCloud> &vpc)
 {
 	unique_lock<mutex> lock(m_mutex);
 	mv_pointCloud_semantic = vpc;
 }
-
+/// @brief 设置可视化实例数据
+/// @param vi 新的可视化实例数据
 void gviewer::SetInstances(const vector<VisualizedInstance> &vi)
 {
 	unique_lock<mutex> lock(m_mutex);
 	mv_instances = vi;
 }
-
+/// @brief 添加新的点
+/// @param p 新的点
 void gviewer::AddNewPoint(const Eigen::Vector3d &p)
 {
 	unique_lock<mutex> lock(m_mutex);
 	mv_pointCloud.back().push_back(p);
 }
-
+/// @brief 添加新的点
+/// @param pts 新的点
 void gviewer::AddNewPoint(const vector<Eigen::Vector3d> &pts)
 {
 	unique_lock<mutex> lock(m_mutex);
@@ -584,38 +609,42 @@ void gviewer::AddNewPoint(const vector<Eigen::Vector3d> &pts)
 		mv_pointCloud.back().push_back(p);
 	}
 }
-
+/// @brief 设置轨迹数据
+/// @param t 新的轨迹数据
 void gviewer::SetTrajectory(const VPointCloud &t)
 {
 	unique_lock<mutex> lock(m_mutex);
 	mv_trajectory.clear();
 	mv_trajectory.push_back(t);
 }
-
+/// @brief 设置轨迹数据
+/// @param vt 新的轨迹数据
 void gviewer::SetTrajectory(const vector<VPointCloud> &vt)
 {
 	unique_lock<mutex> lock(m_mutex);
 	mv_trajectory = vt;
 }
-
+/// @brief 增加新的轨迹位置
+/// @param p 轨迹位置点
 void gviewer::AddNewPos(const Eigen::Vector3d &p)
 {
 	unique_lock<mutex> lock(m_mutex);
 	mv_trajectory.back().push_back(p);
 }
-
+/// @brief 截图函数，用于保存当前窗口截图
+/// @param s 截图保存路径
 void gviewer::ScreenShot(const string &s)
 {
 	unique_lock<mutex> lock(m_mutex);
 	need_screenshot = true;
 	screenshot_path = s;
 }
-
+/// @brief 设置中心
 void gviewer::SetCenter()
 {
 	unique_lock<mutex> lock(m_mutex);
 }
-
+/// @brief 显示窗口
 void gviewer::Show()
 {
 	if (t)
@@ -624,7 +653,7 @@ void gviewer::Show()
 	t = new thread(&gviewer::Run, this);
 	// t->detach();
 }
-
+/// @brief 隐藏窗口
 void gviewer::Hide()
 {
 	if (!t)
@@ -637,7 +666,10 @@ void gviewer::Hide()
 	window = nullptr;
 	t = nullptr;
 }
-
+/// @brief 绘制圆柱体
+/// @param r 圆柱体的半径
+/// @param l 圆柱体的长度
+/// @param edgenum 圆柱体的边数
 void MyCylinder(GLdouble r, GLdouble l, int edgenum)
 {
 	for (int i = 0; i < edgenum; i++)
@@ -662,7 +694,11 @@ void MyCylinder(GLdouble r, GLdouble l, int edgenum)
 		glEnd();
 	}
 }
-
+/// @brief 设置透视投影矩阵
+/// @param fov 视角
+/// @param aspectRatio 宽高比
+/// @param zNear 近平面距离
+/// @param zFar 远平面距离
 void MyPerspective(GLdouble fov, GLdouble aspectRatio, GLdouble zNear, GLdouble zFar)
 {
 	GLdouble rFov = fov * 3.14159265 / 180.0;
@@ -672,7 +708,11 @@ void MyPerspective(GLdouble fov, GLdouble aspectRatio, GLdouble zNear, GLdouble 
 			  zNear * tan(rFov / 2.0),
 			  zNear, zFar);
 }
-
+/// @brief 处理鼠标按键事件
+/// @param window 窗口指针
+/// @param button 按下的鼠标按键
+/// @param action 鼠标按键的状态
+/// @param mods 按下的修饰键
 void mouse_button_callback(GLFWwindow *window, int button, int action, int mods)
 {
 
@@ -707,7 +747,10 @@ void mouse_button_callback(GLFWwindow *window, int button, int action, int mods)
 		is_pressR = false;
 	}
 }
-
+/// @brief 处理鼠标移动事件
+/// @param window 窗口指针
+/// @param xpos 当前鼠标位置x
+/// @param ypos	当前鼠标位置y
 static void cursor_position_callback(GLFWwindow *window, double xpos, double ypos)
 {
 	if (is_pressL)
@@ -721,7 +764,10 @@ static void cursor_position_callback(GLFWwindow *window, double xpos, double ypo
 		m_trans_X = m_trans_X0 + (xpos - m_mouseR_x) * 0.015;
 	}
 }
-
+/// @brief 鼠标滚轮事件
+/// @param window 窗口指针
+/// @param xoffset 滚轮的偏移量x
+/// @param yoffset 滚轮的偏移量y
 void scroll_callback(GLFWwindow *window, double xoffset, double yoffset)
 {
 	if (yoffset > 0)
@@ -729,6 +775,12 @@ void scroll_callback(GLFWwindow *window, double xoffset, double yoffset)
 	if (yoffset < 0)
 		m_scale /= 1.1;
 }
+/// @brief 处理键盘事件
+/// @param window 窗口指针
+/// @param key 键盘按键
+/// @param scancode 键盘扫描码
+/// @param action 键盘按键的状态
+/// @param mods 
 void key_callback(GLFWwindow *window, int key, int scancode, int action, int mods)
 {
 	if (key == GLFW_KEY_O && action == GLFW_PRESS)
@@ -773,7 +825,8 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action, int mod
 		m_curr_X -= m_interval;
 	}
 }
-
+/// @brief 绘制一个天线塔。函数通过计算天线塔各个部分的坐标，并使用OpenGL的glBegin和glEnd函数绘制线段和多边形面。
+/// @param size 天线塔的大小
 void MyAerial(GLfloat size)
 {
 	Eigen::Matrix4d T;
@@ -816,6 +869,7 @@ void MyAerial(GLfloat size)
 	glPopMatrix();
 }
 
+/// @brief 绘制一个框架，用于显示相机的方向。
 void MyFrame()
 {
 	float w = 0.1;
@@ -846,7 +900,8 @@ void MyFrame()
 	glVertex3f(w, -h, z);
 	glEnd();
 }
-
+/// @brief 绘制三个坐标轴，用于显示相机的方向
+/// @param scale 坐标轴的大小
 void MyAxis(GLfloat scale)
 {
 	glPushMatrix();
@@ -864,7 +919,8 @@ void MyAxis(GLfloat scale)
 	MyCylinder(0.025f * 1 / m_scale, 0.5 * m_interval * scale, 8);
 	glPopMatrix();
 }
-
+/// @brief 绘制三个坐标轴，用于显示相机的方向。
+/// @param scale 坐标轴的大小
 void MyAxisSimple(GLfloat scale)
 {
 	glColor3f(0.5f, 0.5f, 1.0f);
@@ -883,7 +939,7 @@ void MyAxisSimple(GLfloat scale)
 	glVertex3f(1, 0, 0);
 	glEnd();
 }
-
+/// @brief 生成字符对应的显示列表，用于在屏幕上显示文字
 void genTextListMap()
 {
 	map<char, uint64_t> letter_map = {
@@ -911,7 +967,8 @@ void genTextListMap()
 		m_text_call_map[iter->first] = index;
 	}
 }
-
+/// @brief 在屏幕底部显示文字
+/// @param s 表示要显示的文字
 void showBottomText(string s)
 {
 	glPushMatrix();
@@ -927,7 +984,8 @@ void showBottomText(string s)
 	}
 	glPopMatrix();
 }
-
+/// @brief 屏幕顶部显示状态信息
+/// @param s 要显示的状态信息
 void showStatusText(string s)
 {
 	glPushMatrix();
@@ -944,7 +1002,10 @@ void showStatusText(string s)
 	}
 	glPopMatrix();
 }
-
+/// @brief 绘制一个立方体
+/// @param l 长
+/// @param w 宽
+/// @param h 高
 void MyBox(GLfloat l, GLfloat w, GLfloat h)
 {
 	// glLineWidth(3);

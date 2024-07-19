@@ -132,10 +132,10 @@ int main_phase_mapping(const SensorConfig & config,
 		this_frame.t = this_pose->second.t;
 		this_frame.time = this_pose->first;
 		this_frame.generateMetricPatches(config, ipm_processer);
-		road_map.addFrame(this_frame);
+		road_map.addFrame(this_frame);// 将当前特征信息加入地图当中
 		if (frame_count % config.mapping_step == 1)
 		{
-			road_map.mergePatches(config, 0, this_frame.R, this_frame.t);
+			road_map.mergePatches(config, 0, this_frame.R, this_frame.t);// 将当前特征信息与地图中的特征信息进行匹配
 			//Sleep(1000);
 		}
 

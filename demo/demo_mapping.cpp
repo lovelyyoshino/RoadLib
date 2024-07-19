@@ -17,7 +17,15 @@ std::default_random_engine random_engine;
 //	const map<double, TrajectoryPoint> &traj_gnss,
 //	map<double, TrajectoryPoint> &traj_ref, double t_start, double t_end);
 
-// Road map generating
+/// @brief  生成道路地图
+/// @param config 传感器配置
+/// @param camstamp 相机时间戳
+/// @param raw_dir 原始图像文件夹路径
+/// @param semantic_dir 语义分割结果文件夹路径
+/// @param traj_ref 里程计轨迹
+/// @param all_frames 所有帧的指针
+/// @param road_map 道路地图
+/// @return 
 int main_phase_mapping(const SensorConfig & config, 
 	map<double, string> camstamp, string raw_dir, string semantic_dir,
 	const Trajectory & traj_ref,

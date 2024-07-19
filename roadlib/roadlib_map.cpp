@@ -15,32 +15,35 @@ map<PatchType, pcl::PointCloud<pcl::PointXYZ>::Ptr> class_pts;
 map<PatchType, vector<pair<int, int>>> class_pts_index;
 map<PatchType, pcl::KdTreeFLANN<pcl::PointXYZ>> class_kdtree;
 
+/// @brief 向实例补丁图加入一帧处理后得到的补丁结果。
+/// @param frame 存储此帧中检测到的所有车道线和路面区域的信息
+/// @return 
 int RoadInstancePatchMap::addFrame(const RoadInstancePatchFrame& frame)
 {
 	for (auto iter_class = frame.patches.begin(); iter_class != frame.patches.end(); iter_class++)
 	{
 		for (auto iter_instance = iter_class->second.begin(); iter_instance != iter_class->second.end(); iter_instance++)
 		{
-			if ((*iter_instance)->valid_add_to_map)
+			if ((*iter_instance)->valid_add_to_map)//对于每张地图上驶出范围的过时补丁需要标记成无效
 			{
 				patches[iter_class->first].push_back(make_shared<RoadInstancePatch>(RoadInstancePatch()));
 				auto& patch = patches[iter_class->first].back();
-				patch->frame_id = frame.id;
+				patch->frame_id = frame.id;//记录其所在帧
 				patch->road_class = (*iter_instance)->road_class;
 				patch->mean_metric = frame.t + frame.R * (*iter_instance)->mean_metric;
 				patch->valid_add_to_map = true;
 				patch->line_valid = (*iter_instance)->line_valid;
 				patch->percept_distance = (*iter_instance)->percept_distance;
-				patch->mean_uncertainty = frame.R * (*iter_instance)->mean_uncertainty * frame.R.transpose();
+				patch->mean_uncertainty = frame.R * (*iter_instance)->mean_uncertainty * frame.R.transpose();//根据这个实例重新计算相对位置,将相关信息转到Map坐标系下
 				patch->line_points_uncertainty = (*iter_instance)->line_points_uncertainty;
-				if ((*iter_instance)->line_valid)
+				if ((*iter_instance)->line_valid)//如果是车道线
 				{
 					patch->line_points_metric.resize((*iter_instance)->line_points_metric.size());
 					patch->line_points_uncertainty.resize((*iter_instance)->line_points_metric.size());
 					for (int j = 0; j < patch->line_points_metric.size(); j++)
 					{
-						patch->line_points_metric[j] = frame.t + frame.R * (*iter_instance)->line_points_metric[j];
-						patch->line_points_uncertainty[j] = frame.R * patch->line_points_uncertainty[j] * frame.R.transpose();
+						patch->line_points_metric[j] = frame.t + frame.R * (*iter_instance)->line_points_metric[j];//根据这个实例重新计算相对位置,将相关信息转到Map坐标系下
+						patch->line_points_uncertainty[j] = frame.R * patch->line_points_uncertainty[j] * frame.R.transpose();//进一步处理点与它们的不确定性估计
 					}
 				}
 				for (int ii = 0; ii < 4; ii++)
@@ -58,53 +61,59 @@ int RoadInstancePatchMap::addFrame(const RoadInstancePatchFrame& frame)
 	return 0;
 }
 
+/// @brief 清除 patches 表示的所有 contents 
+/// @return 
 int RoadInstancePatchMap::clearMap()
 {
 	patches.clear();
 	return 0;
 }
 
+/// @brief 将 Patches Map 写入二进制文件
+/// @param filename 文件名
+/// @return 
 int RoadInstancePatchMap::saveMapToFileBinaryRaw(string filename)
 {
 	std::cout<<"[INFO] Saving map to "<<filename<<"..."<<std::endl;
 	size_t count;
 	float float_buffer[9];
 	FILE* fp = fopen(filename.c_str(), "wb");
-	fwrite(ref.data(), sizeof(double), 3, fp);
+	fwrite(ref.data(), sizeof(double), 3, fp);//隐式参考平面(ref)
 	count = patches.size();
-	fwrite(&count, sizeof(count), 1, fp);
-	for (auto iter = patches.begin(); iter != patches.end(); iter++)
+	fwrite(&count, sizeof(count), 1, fp);//写入类别数量
+	for (auto iter = patches.begin(); iter != patches.end(); iter++)//遍历整个 Patch Map，逐个写入针对每种子类型之前的大小以及每个子类型的数量。
 	{
 		//if (iter->first != PatchType::SOLID) continue;
-		fwrite(&(iter->first), sizeof(iter->first), 1, fp);
+		fwrite(&(iter->first), sizeof(iter->first), 1, fp);//写入类别
 		count = iter->second.size();
-		fwrite(&(count), sizeof(count), 1, fp);
+		fwrite(&(count), sizeof(count), 1, fp);//写入数量
 		for (int i = 0; i < iter->second.size(); i++)
 		{
 			auto& this_patch = iter->second[i];
-			fwrite(&(RoadInstancePatchFrame::next_id), sizeof(RoadInstancePatchFrame::next_id), 1, fp);
-			fwrite(&(this_patch->id), sizeof(this_patch->id), 1, fp);
-			fwrite(&(this_patch->road_class), sizeof(this_patch->road_class), 1, fp);
+			fwrite(&(RoadInstancePatchFrame::next_id), sizeof(RoadInstancePatchFrame::next_id), 1, fp);//写入下一个ID
+			fwrite(&(this_patch->id), sizeof(this_patch->id), 1, fp);//写入ID
+			fwrite(&(this_patch->road_class), sizeof(this_patch->road_class), 1, fp);//写入类别
 
-			fwrite(&(this_patch->line_valid), sizeof(this_patch->line_valid), 1, fp);
-			fwrite(&(this_patch->frozen), sizeof(this_patch->frozen), 1, fp);
-			fwrite(&(this_patch->merged), sizeof(this_patch->merged), 1, fp);
-			fwrite(&(this_patch->valid_add_to_map), sizeof(this_patch->valid_add_to_map), 1, fp);
+			fwrite(&(this_patch->line_valid), sizeof(this_patch->line_valid), 1, fp);//写入是否有效
+			fwrite(&(this_patch->frozen), sizeof(this_patch->frozen), 1, fp);//写入是否冻结
+			fwrite(&(this_patch->merged), sizeof(this_patch->merged), 1, fp);//写入是否合并
+			fwrite(&(this_patch->valid_add_to_map), sizeof(this_patch->valid_add_to_map), 1, fp);//写入是否添加到地图
 
+            //写入均值
 			for (int z = 0; z < 3; z++) float_buffer[z] = (float)this_patch->mean_metric(z);
 			fwrite(float_buffer, sizeof(float), 3, fp);
-
+            //写入四个边界点
 			for (int iii = 0; iii < 4; iii++)
 			{
 				for (int z = 0; z < 3; z++) float_buffer[z] = (float)this_patch->b_point_metric[iii](z);
 				fwrite(float_buffer, sizeof(float), 3, fp);
 			}
-
+            //写入四个边界点的不确定性
 			for (int z = 0; z < 4; z++) float_buffer[z] = (float)this_patch->b_unc_dist[z];
 			fwrite(float_buffer, sizeof(float), 4, fp);
 
 
-
+            //写入车道线的点
 			count = this_patch->line_points_metric.size();
 			fwrite(&(count), sizeof(count), 1, fp);
 			for (int ii = 0; ii < this_patch->line_points_metric.size(); ii++)
@@ -112,10 +121,10 @@ int RoadInstancePatchMap::saveMapToFileBinaryRaw(string filename)
 				for (int z = 0; z < 3; z++) float_buffer[z] = (float)this_patch->line_points_metric[ii](z);
 				fwrite(float_buffer, sizeof(float), 3, fp);
 			}
-
+            //写入均值的不确定性
 			for (int z = 0; z < 9; z++) float_buffer[z] = (float)this_patch->mean_uncertainty(z / 3, z % 3);
 			fwrite(float_buffer, sizeof(float), 9, fp);
-
+            //写入车道线的不确定性
 			count = this_patch->line_points_uncertainty.size();
 			fwrite(&(count), sizeof(count), 1, fp);
 			for (int ii = 0; ii < this_patch->line_points_uncertainty.size(); ii++)
@@ -130,19 +139,21 @@ int RoadInstancePatchMap::saveMapToFileBinaryRaw(string filename)
 	std::cout<<"[INFO] Finished."<<std::endl;
 	return 0;
 }
-
+/// @brief 从二进制文件中加载地图数据
+/// @param filename 要加载的文件名
+/// @return 
 int RoadInstancePatchMap::loadMapFromFileBinaryRaw(string filename)
 {
 	std::cout<<"[INFO] Loading map from "<<filename<<"..."<<std::endl;
 	FILE* fp = fopen(filename.c_str(), "rb");
-	for (int i = 0; i < 3; i++) fread(&ref(i), sizeof(double), 1, fp);
+	for (int i = 0; i < 3; i++) fread(&ref(i), sizeof(double), 1, fp);//打开文件并读取参考点
 
-	size_t class_count; fread(&class_count, sizeof(size_t), 1, fp);
+	size_t class_count; fread(&class_count, sizeof(size_t), 1, fp);//读取类别数量
 	float float_temp[9];
 	for (int i_class = 0; i_class < class_count; i_class++)
 	{
 		PatchType road_class;
-		fread(&road_class, sizeof(int), 1, fp);
+		fread(&road_class, sizeof(int), 1, fp);//读取类别
 		size_t pcount;
 		fread(&pcount, sizeof(size_t), 1, fp);
 		patches[road_class];
@@ -196,24 +207,27 @@ int RoadInstancePatchMap::loadMapFromFileBinaryRaw(string filename)
 	return 0;
 }
 
+/// @brief 构建 KD 树用于快速最近邻搜索
+/// @return 
 int RoadInstancePatchMap::buildKDTree()
 {
-	for (auto iter_class = this->patches.begin(); iter_class != this->patches.end(); iter_class++)
+	for (auto iter_class = this->patches.begin(); iter_class != this->patches.end(); iter_class++)//遍历所有的补丁
 	{
+        //创建存储点云、索引和 KD 树对象的容器
 		class_pts.emplace(iter_class->first, pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>));
 		class_pts_index.emplace(iter_class->first, vector<pair<int, int>>());
 		class_kdtree.emplace(iter_class->first, pcl::KdTreeFLANN<pcl::PointXYZ>());
 		auto& this_pts_ptr = class_pts[iter_class->first];
 		auto& kdtree = class_kdtree[iter_class->first];
 		auto& this_pts_index = class_pts_index[iter_class->first];
-		if (iter_class->first == PatchType::DASHED || iter_class->first == PatchType::GUIDE)
+		if (iter_class->first == PatchType::DASHED || iter_class->first == PatchType::GUIDE)//如果是虚线或者引导线,则只有一个点
 		{
 			for (int i = 0; i < iter_class->second.size(); i++)
 			{
 				this_pts_index.push_back(make_pair(i, 0));
 			}
 		}
-		else if (iter_class->first == PatchType::SOLID || iter_class->first == PatchType::STOP)
+		else if (iter_class->first == PatchType::SOLID || iter_class->first == PatchType::STOP)//如果是实线或者停止线,则有多个点
 		{
 			for (int i = 0; i < iter_class->second.size(); i++)
 			{
@@ -231,7 +245,7 @@ int RoadInstancePatchMap::buildKDTree()
 
 		if (iter_class->first == PatchType::DASHED || iter_class->first == PatchType::GUIDE)
 		{
-			for (size_t i = 0; i < this_pts_index.size(); i++)
+			for (size_t i = 0; i < this_pts_index.size(); i++)//将点云中的点的坐标赋值为对应的均值
 			{
 				this_pts_ptr->points[i].x = iter_class->second[this_pts_index[i].first]->mean_metric(0);
 				this_pts_ptr->points[i].y = iter_class->second[this_pts_index[i].first]->mean_metric(1);
@@ -240,7 +254,7 @@ int RoadInstancePatchMap::buildKDTree()
 		}
 		else if (iter_class->first == PatchType::SOLID || iter_class->first == PatchType::STOP)
 		{
-			for (size_t i = 0; i < this_pts_index.size(); i++)
+			for (size_t i = 0; i < this_pts_index.size(); i++)//将点云中的点的坐标赋值为对应线点
 			{
 				this_pts_ptr->points[i].x = iter_class->second[this_pts_index[i].first]->line_points_metric[this_pts_index[i].second](0);
 				this_pts_ptr->points[i].y = iter_class->second[this_pts_index[i].first]->line_points_metric[this_pts_index[i].second](1);
@@ -254,40 +268,45 @@ int RoadInstancePatchMap::buildKDTree()
 	return 0;
 }
 
+/// @brief 对传感器数据进行匹配，找到与地图上各种类型道路补丁最接近的匹配点对
+/// @param config 传感器配置信息
+/// @param frame 当前帧的道路实例补丁帧
+/// @param mode 模式标志，影响匹配策略
+/// @return 
 map<PatchType, vector<pair<int, int>>> RoadInstancePatchMap::mapMatch(const SensorConfig &config, 
 	RoadInstancePatchFrame& frame, int mode)
 {
 	bool wide_search = true;
-	double search_radius = wide_search ? 20 : 10;
+	double search_radius = wide_search ? 20 : 10;//根据wide_search确定搜索半径search_rad
 	map<PatchType, vector<pair<int, int>>> match_pairs;
-	for (auto iter_class = frame.patches.begin(); iter_class != frame.patches.end(); iter_class++)
+	for (auto iter_class = frame.patches.begin(); iter_class != frame.patches.end(); iter_class++)//遍历每个类别的道路补丁
 	{
 		match_pairs[iter_class->first] = vector<pair<int, int>>();
 		if (iter_class->first == PatchType::DASHED || iter_class->first == PatchType::GUIDE
-			|| iter_class->first == PatchType::SOLID || iter_class->first == PatchType::STOP)
+			|| iter_class->first == PatchType::SOLID || iter_class->first == PatchType::STOP)//如果是特定类型（虚线、引导线、实线、停止线），则进行以下操作
 		{
 			for (int i = 0; i < iter_class->second.size(); i++)
 			{
 				auto& this_patch = iter_class->second[i];
 				if(!this_patch->valid_add_to_map) continue;
 
-				Vector3d mean_metric = frame.t + frame.R * this_patch->mean_metric;
+				Vector3d mean_metric = frame.t + frame.R * this_patch->mean_metric;//补丁中心在地图坐标系下的位置
 
 				vector<int> indice2;
 				vector<float> dist2;
-				class_kdtree[iter_class->first].radiusSearch(pcl::PointXYZ((float)mean_metric(0), (float)mean_metric(1), 0.0), search_radius, indice2, dist2);
+				class_kdtree[iter_class->first].radiusSearch(pcl::PointXYZ((float)mean_metric(0), (float)mean_metric(1), 0.0), search_radius, indice2, dist2);//在该位置附近搜索地图上的匹配点
 
 
 				if (indice2.size() > 0)
 				{
-					if (iter_class->first == PatchType::DASHED || iter_class->first == PatchType::GUIDE)
+					if (iter_class->first == PatchType::DASHED || iter_class->first == PatchType::GUIDE)//如果是虚线或引导线
 					{
 						if (fabs(this->patches[iter_class->first][class_pts_index[iter_class->first][indice2[0]].first]->h() - frame.patches[iter_class->first][i]->h()) > 2.0
-							|| fabs(this->patches[iter_class->first][class_pts_index[iter_class->first][indice2[0]].first]->w() - frame.patches[iter_class->first][i]->w()) > 2.0)
+							|| fabs(this->patches[iter_class->first][class_pts_index[iter_class->first][indice2[0]].first]->w() - frame.patches[iter_class->first][i]->w()) > 2.0)//如果高度或宽度差距过大，这个里面只有i所以可以直接找到
 							continue;
 						Vector3d n1 = this->patches[iter_class->first][class_pts_index[iter_class->first][indice2[0]].first]->mean_metric;
 						Vector3d n2 = frame.patches[iter_class->first][i]->mean_metric;
-						double cos_theta = fabs(n1.dot(n2) / (n1.norm() * n2.norm()));
+						double cos_theta = fabs(n1.dot(n2) / (n1.norm() * n2.norm()));//计算两个补丁的法向量
 
 						//if (cos_theta > cos(15.0 / 180 * M_PI))
 						//	continue;
@@ -302,11 +321,11 @@ map<PatchType, vector<pair<int, int>>> RoadInstancePatchMap::mapMatch(const Sens
 
 							if ((this->patches[iter_class->first][class_pts_index[iter_class->first][indice2[0]].first]->mean_metric - mean_metric).norm() 
 									> config.localization_max_strict_match_dist
-								|| this->patches[iter_class->first][class_pts_index[iter_class->first][indice2[0]].first]->h() < 1.5)
+								|| this->patches[iter_class->first][class_pts_index[iter_class->first][indice2[0]].first]->h() < 1.5)//如果高度小于1.5米,或者平均点距离大于最大严格匹配距离
 								continue;
 						}
 					}
-					match_pairs[iter_class->first].push_back(make_pair(class_pts_index[iter_class->first][indice2[0]].first, i));
+					match_pairs[iter_class->first].push_back(make_pair(class_pts_index[iter_class->first][indice2[0]].first, i));//将匹配点对加入到匹配对中
 				}
 			}
 		}
@@ -315,36 +334,45 @@ map<PatchType, vector<pair<int, int>>> RoadInstancePatchMap::mapMatch(const Sens
 	return match_pairs;
 }
 
+/// @brief 获取线特征类型道路补丁中的线段匹配关系
+/// @param config 传感器配置信息
+/// @param frame 当前帧的道路实例补丁帧
+/// @param road_class 道路补丁类型
+/// @param frame_line_count 当前帧中的线段索引
+/// @param map_line_count 地图中的线段索引
+/// @param mode 模式标志，影响匹配策略
+/// @return 
 vector<pair<int, int>> RoadInstancePatchMap::getLineMatch(const SensorConfig &config, RoadInstancePatchFrame& frame, 
 	PatchType road_class, int frame_line_count, int map_line_count, int mode)
 {
-	auto& this_patch_frame = frame.patches[road_class][frame_line_count];
-	auto& this_patch_map = this->patches[road_class][map_line_count];
+	auto& this_patch_frame = frame.patches[road_class][frame_line_count];//当前帧中的线段
+	auto& this_patch_map = this->patches[road_class][map_line_count];//地图中的线段
 
 	vector<pair<int, int>> match_pairs;
 	Vector3d last_w_p = Vector3d(0, 0, 0);
 
 	for (int i = 0; i < this_patch_frame->line_points_metric.size(); i++)
 	{
-		Vector3d w_p = frame.R * this_patch_frame->line_points_metric[i] + frame.t;
-		if (road_class == PatchType::SOLID)
+		Vector3d w_p = frame.R * this_patch_frame->line_points_metric[i] + frame.t;//将当前帧中的线段转换到地图坐标系下
+		if (road_class == PatchType::SOLID)//如果是实线
 		{
-			if ((w_p - last_w_p).norm() < config.localization_solid_sample_interval) continue;
+			if ((w_p - last_w_p).norm() < config.localization_solid_sample_interval) continue;//如果两个点之间的距离小于实线采样间隔，则跳过
 		}
 		map<double, int> dist;
 		for (int j = 0; j < this_patch_map->line_points_metric.size(); j++)
 		{
-			dist.emplace((w_p - this_patch_map->line_points_metric[j]).norm(), j);
+			dist.emplace((w_p - this_patch_map->line_points_metric[j]).norm(), j);//计算当前帧中的线段与地图中的线段的距禂
 		}
 		auto iter_dist = dist.begin();
 		auto iter_dist_2 = dist.begin(); iter_dist_2++;
 
-		int match_id = min(iter_dist->second, iter_dist_2->second);
+		int match_id = min(iter_dist->second, iter_dist_2->second);//找到距离最近的两个点
 
-		if (match_id == 0 || match_id > this_patch_map->line_points_metric.size() - 3)
+		if (match_id == 0 || match_id > this_patch_map->line_points_metric.size() - 3)//如果匹配点是第一个或者最后一部分，则跳过
 		{
 			continue;
 		}
+        //根据最近两个idx取得对应的点
 		last_w_p = w_p;
 		Vector3d w_p0 = this_patch_map->line_points_metric[match_id];
 		Vector3d w_p1 = this_patch_map->line_points_metric[match_id + 1];
@@ -356,14 +384,13 @@ vector<pair<int, int>> RoadInstancePatchMap::getLineMatch(const SensorConfig &co
 		double Dxli = w_p[0] - w_p0[0];
 		double Dyli = w_p[1] - w_p0[1];
 		double Dzli = w_p[2] - w_p0[2];
-
-		double a = Dylj * Dzli - Dzlj * Dyli;
+		double a = Dylj * Dzli - Dzlj * Dyli;//计算两个向量的叉乘
 		double b = Dzlj * Dxli - Dxlj * Dzli;
 		double c = Dxlj * Dyli - Dylj * Dxli;
 
-		double Dvljxvli = pow((a * a + b * b + c * c), 0.5);
-		double Dvlj = pow(Dxlj * Dxlj + Dylj * Dylj + Dzlj * Dzlj, 0.5);
-		double ddd = Dvljxvli / Dvlj;
+		double Dvljxvli = pow((a * a + b * b + c * c), 0.5);//计算叉乘向量的模
+		double Dvlj = pow(Dxlj * Dxlj + Dylj * Dylj + Dzlj * Dzlj, 0.5);//计算向量的模
+		double ddd = Dvljxvli / Dvlj;//计算点到直线的距离，这里通过叉乘向量的模除以直线向量的模来
 		if (mode > 0 && ddd > config.localization_max_strict_match_dist) continue;
 		match_pairs.push_back(make_pair(i, match_id));
 	}
@@ -371,18 +398,23 @@ vector<pair<int, int>> RoadInstancePatchMap::getLineMatch(const SensorConfig &co
 	return match_pairs;
 }
 
+/// @brief 解除所有道路补丁的冻结状态
+/// @return 
 int RoadInstancePatchMap::unfreeze()
 {
 	for (auto iter_class = patches.begin(); iter_class != patches.end(); iter_class++)
 		for (int i = 0; i < iter_class->second.size(); i++)
 		{
-			iter_class->second[i]->frozen = false;
+			iter_class->second[i]->frozen = false;//遍历所有道路补丁，将其冻结状态设置为false
 		}
 	return 0;
 }
-
+/// @brief 将另一个 RoadInstancePatchMap 对象中的数据合并到当前对象中，重新编号并转换坐标。
+/// @param road_map_other 其他的地图信息
+/// @return 
 int RoadInstancePatchMap::mergeMap(const RoadInstancePatchMap& road_map_other)
 {
+    //检查当前对象和要合并对象的参考点是否在合理范围内
 	auto refp0 = this->ref;
 	auto refp1 = road_map_other.ref;
 	assert(refp0.norm() > 6000e3 && refp0.norm() < 7000e3);
@@ -397,12 +429,12 @@ int RoadInstancePatchMap::mergeMap(const RoadInstancePatchMap& road_map_other)
 		for (int i = 0; i < iter_class->second.size(); i++)
 		{
 			if (iter_class->second[i]->id > next_id)
-				next_id = iter_class->second[i]->id;
+				next_id = iter_class->second[i]->id;//计算当前对象中所有补丁的最大ID
 		}
 	}
-	next_id++;
+	next_id++;//下一个ID
 
-	Matrix3d Rn0e = calcRne(refp0);
+	Matrix3d Rn0e = calcRne(refp0);//计算当前对象的参考点的旋转矩阵
 	Matrix3d Rn1e = calcRne(refp1);
 	for (auto iter_class = road_map_other.patches.begin(); iter_class != road_map_other.patches.end(); iter_class++)
 	{
@@ -410,10 +442,10 @@ int RoadInstancePatchMap::mergeMap(const RoadInstancePatchMap& road_map_other)
 		{
 			auto& this_patch = iter_class->second[i];
 			auto patch_copy = this_patch;
-			patch_copy->id += next_id;
+			patch_copy->id += next_id;//对于 road_map_other 中的每个补丁，重新编号
 			// Assuming $Rn0e \sim Rn1e$, the uncertainties wouldn't be changed.
 			for (int ii = 0; ii < 4; ii++)
-				patch_copy->b_point_metric[ii] = Rn0e * (Rn1e.transpose() * patch_copy->b_point_metric[ii] + refp1 - refp0);
+				patch_copy->b_point_metric[ii] = Rn0e * (Rn1e.transpose() * patch_copy->b_point_metric[ii] + refp1 - refp0);//并将其坐标从 refp1 参考点系转换到 refp0 参考点系
 			for (int ii = 0; ii < patch_copy->line_points_metric.size(); ii++)
 				patch_copy->line_points_metric[ii] = Rn0e * (Rn1e.transpose() * patch_copy->line_points_metric[ii] + refp1 - refp0);
 			patch_copy->mean_metric = Rn0e * (Rn1e.transpose() * patch_copy->mean_metric + refp1 - refp0);
@@ -423,6 +455,8 @@ int RoadInstancePatchMap::mergeMap(const RoadInstancePatchMap& road_map_other)
 	return 0;
 }
 
+/// @brief 清理当前对象中的无效或错误数据
+/// @return 
 int RoadInstancePatchMap::cleanMap()
 {
 	for (auto iter_class = patches.begin(); iter_class != patches.end(); iter_class++)
@@ -431,33 +465,33 @@ int RoadInstancePatchMap::cleanMap()
 		{
 			bool bad_flag = false;
 
-			if (iter_class->first == PatchType::SOLID || iter_class->first == PatchType::STOP)
+			if (iter_class->first == PatchType::SOLID || iter_class->first == PatchType::STOP)//检查补丁有效性（实线或停止线）
 			{
 				for (int i = 0; i < (*iter_patch)->line_points_metric.size(); i++)
 				{
-					if (isnan((*iter_patch)->line_points_metric[i].norm()))
+					if (isnan((*iter_patch)->line_points_metric[i].norm()))//如果有任何一个点的坐标为NAN，则将其标记为无效
 					{
 						bad_flag = true;
 					}
 				}
-				if ((*iter_patch)->line_points_metric.size() < 5 || ((*iter_patch)->line_points_metric.back() - (*iter_patch)->line_points_metric.front()).norm() < 5)
+				if ((*iter_patch)->line_points_metric.size() < 5 || ((*iter_patch)->line_points_metric.back() - (*iter_patch)->line_points_metric.front()).norm() < 5)//如果线段的点数小于5或者线段的长度小于5，则将其标记为无效
 					bad_flag = true;
 
 			}
-			else if (iter_class->first == PatchType::DASHED || iter_class->first == PatchType::GUIDE)
+			else if (iter_class->first == PatchType::DASHED || iter_class->first == PatchType::GUIDE)//检查补丁有效性（虚线或导向线）
 			{
 				if (isnan((*iter_patch)->b_point_metric[0].norm()) ||
 					isnan((*iter_patch)->b_point_metric[1].norm()) ||
 					isnan((*iter_patch)->b_point_metric[2].norm()) ||
 					isnan((*iter_patch)->b_point_metric[3].norm()) ||
 					isnan((*iter_patch)->mean_metric.norm())||
-					(*iter_patch)->w() < 0.01 || (*iter_patch)->h() < 0.01)
+					(*iter_patch)->w() < 0.01 || (*iter_patch)->h() < 0.01)//如果有任何一个点的坐标为NAN或者宽度或高度小于0.01，则将其标记为无效
 				{
 					bad_flag = true;
 				}
 			}
 			if (bad_flag)
-				iter_patch = iter_class->second.erase(iter_patch);
+				iter_patch = iter_class->second.erase(iter_patch);//删除无效补丁
 			else
 			{
 				iter_patch++;
@@ -467,9 +501,13 @@ int RoadInstancePatchMap::cleanMap()
 
 	return 0;
 }
-
+/// @brief 将当前对象的补丁数据地理配准到新的轨迹数据上
+/// @param new_traj 新的轨迹数据
+/// @param lines_vis 用于可视化的实例集合
+/// @return 
 int RoadInstancePatchMap::geoRegister(const Trajectory& new_traj, vector<VisualizedInstance>& lines_vis)
 {
+    ///初始化可视化模板
 	std::cerr<<"[INFO] Start geo-registering."<<std::endl;
 	VisualizedInstance vis_instance_template;
 	vis_instance_template.type = VisualizedPatchType::LINE_SEGMENT;
@@ -479,54 +517,54 @@ int RoadInstancePatchMap::geoRegister(const Trajectory& new_traj, vector<Visuali
 	vis_instance_template.linewidth = 0.5f;
 
 	ref = new_traj.ref;
-
+    //更新参考点并映射旧姿态
 	map<long long, pair<Matrix3d, Vector3d>> old_poses = queued_poses;
 	map<long long, pair<Matrix3d, Vector3d>> new_poses;
 	for (auto iter = timestamps.begin(); iter != timestamps.end(); iter++)
 	{
-		auto iiter = new_traj.poses.lower_bound(iter->second - 0.001);
+		auto iiter = new_traj.poses.lower_bound(iter->second - 0.001);//找到新轨迹中最接近的时间戳
 		if (fabs(iiter->first - iter->second) < 0.01)
 			new_poses[iter->first] = make_pair(iiter->second.R, iiter->second.t);
 	}
-
+    //处理每个补丁类型
 	for (auto iter_class = patches.begin(); iter_class != patches.end(); iter_class++)
 	{
 		auto start = chrono::system_clock::now();
 		for (int i = 0; i < iter_class->second.size(); i++)
 		{
 			auto& this_patch = iter_class->second[i];
-			if (!(this_patch->frozen)) continue; // TODO!!!!!!!!!!!!!!!
+			if (!(this_patch->frozen)) continue; //如果补丁没有被冻结，则跳过
 
-			if (iter_class->first == PatchType::SOLID || iter_class->first == PatchType::STOP)
+			if (iter_class->first == PatchType::SOLID || iter_class->first == PatchType::STOP)//处理实线或停止线类型的补丁
 			{
-				if (this_patch->linked_frames.size() != this_patch->line_points_metric.size()) continue;
+				if (this_patch->linked_frames.size() != this_patch->line_points_metric.size()) continue;//如果补丁的线段数量和关联帧数量不一致，则跳过
 
 				vector<Eigen::Vector3d*> pts;
 				for (int j = 0; j < this_patch->line_points_metric.size(); j++)
-					pts.push_back(&this_patch->line_points_metric[j]);
+					pts.push_back(&this_patch->line_points_metric[j]);//将补丁的线段点加入到pts中
 
 				for (int j = 0; j < pts.size(); j++)
 				{
 					Vector3d twf_count; twf_count.setZero();
 					int ccount = 0;
-					for (int iii = 0; iii < this_patch->linked_frames[j].size(); iii++)
-					{
-						long long id = this_patch->linked_frames[j][iii];
-						Eigen::Vector3d tvf = old_poses[id].first.transpose() * (*pts[j] - old_poses[id].second);
-						Eigen::Vector3d twf = new_poses[id].first * tvf + new_poses[id].second;
-						twf_count += twf;
-						ccount += 1;
+					for (int iii = 0; iii < this_patch->linked_frames[j].size(); iii++)//遍历关联帧
+                    {
+                        long long id = this_patch->linked_frames[j][iii];
+                        Eigen::Vector3d tvf = old_poses[id].first.transpose() * (*pts[j] - old_poses[id].second);//将当前帧中的线段点转换到地图坐标系下
+                        Eigen::Vector3d twf = new_poses[id].first * tvf + new_poses[id].second;//将地图坐标系下的线段点转换到新的轨迹坐标系下
+                        twf_count += twf;
+                        ccount += 1;
 
-						vis_instance_template.pts[0] = *pts[j];
-						vis_instance_template.pts[1] = old_poses[id].second;
-						lines_vis.push_back(vis_instance_template);
-					}
+                        vis_instance_template.pts[0] = *pts[j];
+                        vis_instance_template.pts[1] = old_poses[id].second;
+                        lines_vis.push_back(vis_instance_template);//将计算出的线段添加到可视化实例集合 lines_vis 中
+                    }
 					*pts[j] = twf_count / ccount;
 				}
 			}
 			else
 			{
-				if (this_patch->linked_frames.size() == 0) continue;
+				if (this_patch->linked_frames.size() == 0) continue;//对于其他类型的补丁，检查 linked_frames 是否为
 				vector<Eigen::Vector3d*> pts;
 
 				Vector3d twf_count;
@@ -537,8 +575,8 @@ int RoadInstancePatchMap::geoRegister(const Trajectory& new_traj, vector<Visuali
 				for (int iii = 0; iii < this_patch->linked_frames[0].size(); iii++)
 				{
 					long long id = this_patch->linked_frames[0][iii];
-					Eigen::Vector3d tvf = old_poses[id].first.transpose() * (this_patch->mean_metric - old_poses[id].second);
-					Eigen::Vector3d twf = new_poses[id].first * tvf + new_poses[id].second;
+					Eigen::Vector3d tvf = old_poses[id].first.transpose() * (this_patch->mean_metric - old_poses[id].second);//将当前帧中的均值转换到地图坐标系下
+					Eigen::Vector3d twf = new_poses[id].first * tvf + new_poses[id].second;//将地图坐标系下的均值转换到新的轨迹坐标系下
 					twf_count += twf;
 					ccount += 1;
 
@@ -546,9 +584,9 @@ int RoadInstancePatchMap::geoRegister(const Trajectory& new_traj, vector<Visuali
 					vis_instance_template.pts[1] = old_poses[id].second;
 					lines_vis.push_back(vis_instance_template);
 				}
-				this_patch->mean_metric = twf_count / ccount;
+				this_patch->mean_metric = twf_count / ccount;//计算均值
 
-				for (int j = 0; j < 4; j++)
+				for (int j = 0; j < 4; j++)//对补丁的四个边界点分别进行坐标转换
 				{
 					twf_count.setZero();
 					ccount = 0;
@@ -574,7 +612,12 @@ int RoadInstancePatchMap::geoRegister(const Trajectory& new_traj, vector<Visuali
 	return 0;
 }
 
-
+/// @brief 合并和清理当前地图中的道路实例补丁。它首先清理冗余补丁，然后对补丁进行聚类和合并，最后刷新补丁的链接帧
+/// @param config 传感器配置参数，用于确定补丁处理的各种阈值和参数
+/// @param mode 模式参数，用于控制处理逻辑的不同分支
+/// @param Rwv 旋转矩阵，用于坐标变换
+/// @param twv 平移向量，用于坐标变换
+/// @return 
 int RoadInstancePatchMap::mergePatches(const SensorConfig& config, const int mode, const Eigen::Matrix3d& Rwv, const Eigen::Vector3d& twv)
 {
 	map<PatchType, vector<shared_ptr<RoadInstancePatch>>> patches_new;
@@ -585,14 +628,14 @@ int RoadInstancePatchMap::mergePatches(const SensorConfig& config, const int mod
 		{
 			for (auto iter_patch = iter_class->second.begin(); iter_patch != iter_class->second.end();)
 			{
-				if (ignore_frame_ids.find((*iter_patch)->frame_id) != ignore_frame_ids.end())
+				if (ignore_frame_ids.find((*iter_patch)->frame_id) != ignore_frame_ids.end())//如果帧ID在忽略的帧ID中，则删除该补丁
 				{
-					if (iter_class->first == PatchType::SOLID)
+					if (iter_class->first == PatchType::SOLID)//如果是实线
 						iter_patch++;
 					//iter_patch = iter_class->second.erase(iter_patch);
-					else if (iter_class->first == PatchType::DASHED || iter_class->first == PatchType::GUIDE || iter_class->first == PatchType::STOP)
+					else if (iter_class->first == PatchType::DASHED || iter_class->first == PatchType::GUIDE || iter_class->first == PatchType::STOP)//如果是虚线、引导线或停止线
 					{
-						if ((*iter_patch)->percept_distance > ignore_frame_ids[(*iter_patch)->frame_id] + 0.5)
+						if ((*iter_patch)->percept_distance > ignore_frame_ids[(*iter_patch)->frame_id] + 0.5)//如果感知距离大于忽略帧ID的感知距离加0.5，则删除该补丁
 						{
 							iter_patch = iter_class->second.erase(iter_patch);
 						}
@@ -611,7 +654,7 @@ int RoadInstancePatchMap::mergePatches(const SensorConfig& config, const int mod
 		}
 	ignore_frame_ids.clear();
 
-	// start patch clustering and merging
+	// 补丁聚类和合并
 	for (auto iter_class = patches.begin(); iter_class != patches.end(); iter_class++)
 	{
 		auto start = chrono::system_clock::now();
@@ -619,52 +662,53 @@ int RoadInstancePatchMap::mergePatches(const SensorConfig& config, const int mod
 		vector<int> cluster_flag(iter_class->second.size(), -1);
 		map<int, vector<int>> cluster_index;
 		int cluster_id = 0;
-
+        // 生成补丁中心点列表
 		for (int i = 0; i < iter_class->second.size(); i++)
 		{
 			auto& iter_instance = iter_class->second[i];
 			pts.push_back(cv::Point2f((iter_instance)->mean_metric(0),
-				(iter_instance)->mean_metric(1)));
+				(iter_instance)->mean_metric(1)));//将补丁的中心点加入到pts中
 		}
 		cv::Mat pts_vec = cv::Mat(pts).reshape(1);
 		pts_vec.convertTo(pts_vec, CV_32F);
 		cv::flann::KDTreeIndexParams indexParams(2);
-		cv::flann::Index kdtree(pts_vec, indexParams);
+		cv::flann::Index kdtree(pts_vec, indexParams);//生成KD树
 		long long comp_count = 0;
-
+        // 对虚线和导向线类型的补丁进行处理
 		if (iter_class->first == PatchType::DASHED || iter_class->first == PatchType::GUIDE)
 		{
 			for (int i = 0; i < iter_class->second.size(); i++)
 			{
-				if (!iter_class->second[i]->valid_add_to_map) continue;
+				if (!iter_class->second[i]->valid_add_to_map) continue;//如果补丁无效，则跳过
 				if (cluster_flag[i] == -1)
 				{
 					vector<int> indice(1000);
 					vector<float> dist(1000);
 					//int num = kdtree.radiusSearch(vector<float>({ pts[i].x,pts[i].y }), indice, dist, 20.0, 1000);
 					int num = pts.size() > 500 ? 500 : pts.size();
-					kdtree.knnSearch(vector<float>({ pts[i].x,pts[i].y }), indice, dist, num);
+					kdtree.knnSearch(vector<float>({ pts[i].x,pts[i].y }), indice, dist, num);//在当前补丁中心点附近搜索最近的num个点,其中indice保存最近的num个点的索引，dist保存最近的num个点的距离
 
-					vector<int> intersection_flag(num, -1);
-					queue<int> new_intersection_instance; new_intersection_instance.push(0);
-					vector<int> same_cluster_flag; // for bi-directional mathching
+					vector<int> intersection_flag(num, -1);//交叉标志
+					queue<int> new_intersection_instance; new_intersection_instance.push(0);//新的交叉实例
+					vector<int> same_cluster_flag;  // 双向匹配
 
-					if (iter_class->second[i]->frozen)
+					if (iter_class->second[i]->frozen)//如果补丁被冻结，则将其标记为无效
 					{
 						intersection_flag[0] = 1;
 					}
 					else
 					{
-						while (new_intersection_instance.size() > 0)
+                        //使用K近邻搜索找到当前补丁附近的点，并初始化交叉标志和双向匹配标志
+						while (new_intersection_instance.size() > 0)//对于每个补丁，遍历其附近的补丁
 						{
 							int cur_id = new_intersection_instance.front();
 							new_intersection_instance.pop();
-							for (int j = 0; j < num; j++)
+							for (int j = 0; j < num; j++)//对于每个补丁，遍历其附近的补丁
 							{
 								cv::Mat rect_intersection;
 
 								if (intersection_flag[j] >= 1) continue;
-								if (iter_class->second[indice[cur_id]]->frozen || iter_class->second[indice[j]]->frozen)
+								if (iter_class->second[indice[cur_id]]->frozen || iter_class->second[indice[j]]->frozen)//如果上一个补丁或者与当前位置最近的补丁被冻结，则将其标记为无效，不去进行优化
 								{
 									intersection_flag[j] = 0;
 								}
@@ -679,18 +723,18 @@ int RoadInstancePatchMap::mergePatches(const SensorConfig& config, const int mod
 											cv::Point2f(iter_class->second[indice[j]]->mean_metric(0), iter_class->second[indice[j]]->mean_metric(1)),
 											cv::Size2f(iter_class->second[indice[j]]->h(), iter_class->second[indice[j]]->w()),
 											atan2(iter_class->second[indice[j]]->d()(1), iter_class->second[indice[j]]->d()(0)) * R2D)
-										, rect_intersection);
+										, rect_intersection);//计算两个补丁的交叉区域,并将结果保存到rect_intersection中
 								}
 
-								if (intersection_flag[j] >= 1)
-								{
-									if (cluster_flag[indice[j]] != -1) // Bidirectinal matching!!!!
-									{
-										same_cluster_flag.push_back(cluster_flag[indice[j]]);
-										continue;
-									}
-									new_intersection_instance.push(j);
-								}
+								if (intersection_flag[j] >= 1)//如果两个补丁有交叉区域
+                                {
+                                    if (cluster_flag[indice[j]] != -1) // 双向匹配
+                                    {
+                                        same_cluster_flag.push_back(cluster_flag[indice[j]]);
+                                        continue;
+                                    }
+                                    new_intersection_instance.push(j);
+                                }
 
 							}
 						}
@@ -701,7 +745,7 @@ int RoadInstancePatchMap::mergePatches(const SensorConfig& config, const int mod
 						for (int j = 0; j < num; j++)
 						{
 							if (intersection_flag[j] > 0)
-								cluster_flag[indice[j]] = cluster_id;
+								cluster_flag[indice[j]] = cluster_id;// 将有交叉的补丁标记为同一簇
 						}
 						cluster_id++;
 					}
@@ -712,45 +756,45 @@ int RoadInstancePatchMap::mergePatches(const SensorConfig& config, const int mod
 			{
 				if (cluster_flag[i] != -1)
 				{
-					(cluster_index[cluster_flag[i]]).push_back(i);
+					(cluster_index[cluster_flag[i]]).push_back(i);//对补丁进行分类，将其按簇存储
 				}
 			}
 
 			for (int i = 0; i < cluster_id; i++)
 			{
-				if (cluster_index[i].size() == 0) continue; // This shouldn't happen. To be fixed.
+				if (cluster_index[i].size() == 0) continue;  // 如果簇为空，跳过
 
 				Eigen::Vector3d mean_ref = iter_class->second[cluster_index[i][0]]->mean_metric;
 
-				// still active
+				 // 仍然活跃的簇
 				if ((mode == 0 && (Rwv.transpose() * (mean_ref - twv)).y() > -config.mapping_patch_freeze_distance && twv != Vector3d::Zero())
-					|| (twv == Vector3d::Zero() && cluster_index[i].size() == 1 && iter_class->second[cluster_index[i][0]]->frozen == false))
+					|| (twv == Vector3d::Zero() && cluster_index[i].size() == 1 && iter_class->second[cluster_index[i][0]]->frozen == false))//如果模式为0并且位置在冻结距离内，或者模式为0且簇中只有一个补丁且未被冻结，则会将其添加到新补丁列表
 				{
 					for (int j = 0; j < cluster_index[i].size(); j++)
 					{
-						patches_new[iter_class->first].push_back(iter_class->second[cluster_index[i][j]]);
+						patches_new[iter_class->first].push_back(iter_class->second[cluster_index[i][j]]);// 将活跃的簇添加到新补丁列表
 					}
 					continue;
 				}
-				if (mode == 0 && cluster_index[i].size() == 1 && iter_class->second[cluster_index[i][0]]->frozen == false)
+				if (mode == 0 && cluster_index[i].size() == 1 && iter_class->second[cluster_index[i][0]]->frozen == false)//如果模式为0且簇中只有一个补丁且未被冻结
 					continue;
 
 
 				vector<double> eigen_value_list;
 				for (int j = 0; j < cluster_index[i].size(); j++)
 				{
-					eigen_value_list.push_back(iter_class->second[cluster_index[i][j]]->h());
+					eigen_value_list.push_back(iter_class->second[cluster_index[i][j]]->h());//计算簇中每个补丁的高度
 				}
 				std::sort(eigen_value_list.begin(), eigen_value_list.end());
 				//if (eigen_value_list.size() < 4) continue;
-				double median_eigen_value = eigen_value_list[(eigen_value_list.size()) / 2];
+				double median_eigen_value = eigen_value_list[(eigen_value_list.size()) / 2];//计算每个簇的中值特征值和边界点
 
 
 
 				vector<Eigen::Vector4d> ds;
 				vector<Eigen::Vector4d> uncs;
 				vector<double> angles;
-
+                // 计算新的边界框，并对边界框进行优化
 				for (int j = 0; j < cluster_index[i].size(); j++)
 				{
 					auto& patch = iter_class->second[cluster_index[i][j]];
@@ -773,51 +817,55 @@ int RoadInstancePatchMap::mergePatches(const SensorConfig& config, const int mod
 				}
 				auto angles_temp = angles;
 				std::sort(angles_temp.begin(), angles_temp.end());
-				double angle_median = angle_ref + angles_temp[angles_temp.size() / 2];
+				double angle_median = angle_ref + angles_temp[angles_temp.size() / 2];//计算角度中值
 
-				// Optimize the bounding box.
+				// 优化边界框
 				for (int dd = 0; dd < 4; dd++)
 				{
-					double x = -99999;
+					double x = -99999;//初始化边界框点 x 的值
 					for (int ii = 0; ii < ds.size(); ii++)
 					{
 						if (x < ds[ii](dd)) x = ds[ii](dd);
 					}
-
+                    //优化边界框点 x 的值
 					double min_unc;
 					double min_x = 0.0;
 					for (int iiter = 0; iiter < 10; iiter++)
 					{
+                        //在每次迭代开始时，重置 min_unc 和 H、v
 						min_unc = 1000;
 						double H = 0.0;
 						double v = 0.0;
 						for (int ii = 0; ii < ds.size(); ii++)
 						{
-							if (mode == 0 && fabs(angles[ii] + angle_ref - angle_median) > 3.0 / 180 * M_PI)
+							if (mode == 0 && fabs(angles[ii] + angle_ref - angle_median) > 3.0 / 180 * M_PI)//如果当前模式为0且角度偏差大于3度，则跳过该点
 							{
 								double zzz = ds_new.norm();
 								continue;
 							}
-							if (uncs[ii](dd) > 1.0) continue;
+							if (uncs[ii](dd) > 1.0) continue;//如果不确定度大于1.0，则跳过
+                            //计算误差 l 和权重 A，并根据误差计算降权因子 downweight
 							double l = (ds[ii](dd) - x) / uncs[ii](dd);
 							double A = 1 / uncs[ii](dd);
 							double downweight = sqrt(fabs(l));
+                            //如果降权因子大于1.5，则跳过
 							if (downweight > 1.5) continue;
 							l /= 1;
 							A /= 1;
 							H += A * A;
 							v += A * l;
-							if (uncs[ii](dd) < min_unc)
+							if (uncs[ii](dd) < min_unc)//找到最小的不确定度和对应的 x 值
 							{
 								min_x = ds[ii](dd);
 								min_unc = uncs[ii](dd);
 							}
 						}
-						x += v / H;
+						x += v / H;//根据累加的 H 和 v 更新 x 值
 					}
 					ds_new(dd) = min_x;
 					uncs_new(dd) = min_unc;
 				}
+                //计算方向旋转矩阵，使边界框旋转到正确的方向
 				Matrix3d direction_rotation;
 				angle_median = -angle_median + M_PI / 2;
 				direction_rotation << cos(angle_median), sin(angle_median), 0,
@@ -918,12 +966,14 @@ int RoadInstancePatchMap::mergePatches(const SensorConfig& config, const int mod
 				cv::waitKey(1);
 #endif
 
-				RoadInstancePatch patch_new;
-				double best_score = 10000;
-				int best_score_id = -1;
+				RoadInstancePatch patch_new;//新的道路元素补丁
+				double best_score = 10000;// 最佳得分初始化为一个大值
+				int best_score_id = -1; // 最佳得分补丁的ID初始化为-1
 
+                // 遍历当前聚类中的所有补丁
 				for (int j = 0; j < cluster_index[i].size(); j++)
 				{
+                    // 更新最佳得分和补丁ID（得分最低且高度接近中位数）
 					if (iter_class->second[cluster_index[i][j]]->percept_distance < best_score
 						&& iter_class->second[cluster_index[i][j]]->h() >= median_eigen_value - 0.1)
 					{
@@ -931,9 +981,11 @@ int RoadInstancePatchMap::mergePatches(const SensorConfig& config, const int mod
 						best_score_id = j;
 					}
 				}
+                // 检查新的边界框是否符合条件
 				if (((ds_new(3) + ds_new(1)) * (ds_new(2) + ds_new(0)) < 2.0 || (ds_new(2) + ds_new(0)) < 0.5) && iter_class->first == PatchType::GUIDE)
-					continue;
+					continue;// 如果条件不符合则跳过当前补丁
 
+                //// 生成新的补丁并更新边界点
 				patch_new = *iter_class->second[cluster_index[i][best_score_id]];
 				Eigen::Vector3d p0(-ds_new(3), -ds_new(0), 0);
 				Eigen::Vector3d p1(ds_new(1), -ds_new(0), 0);
@@ -947,11 +999,11 @@ int RoadInstancePatchMap::mergePatches(const SensorConfig& config, const int mod
 				patch_new.b_unc_dist[1] = uncs_new(1);
 				patch_new.b_unc_dist[2] = uncs_new(2);
 				patch_new.b_unc_dist[3] = uncs_new(3);
-				patch_new.merged = true;
-				patch_new.frozen = true;
+				patch_new.merged = true;// 标记补丁为已合并
+				patch_new.frozen = true;// 标记补丁为冻结状态
 
 
-				patches_new[iter_class->first].push_back(make_shared<RoadInstancePatch>(patch_new));
+				patches_new[iter_class->first].push_back(make_shared<RoadInstancePatch>(patch_new));//将新的补丁添加到新的补丁集合中
 			}
 		}
 		else if (iter_class->first == PatchType::SOLID || iter_class->first == PatchType::STOP)
@@ -965,21 +1017,21 @@ int RoadInstancePatchMap::mergePatches(const SensorConfig& config, const int mod
 					vector<int> indice(1000);
 					vector<float> dist(1000);
 					int num = pts.size() > 10 ? 10 : pts.size();
-					kdtree.knnSearch(vector<float>({ pts[i].x,pts[i].y }), indice, dist, num);
+					kdtree.knnSearch(vector<float>({ pts[i].x,pts[i].y }), indice, dist, num);// 在当前补丁中心点附近搜索最近的num个点
 
 					vector<int> intersection_flag(num, -1);
 					queue<int> new_intersection_instance; new_intersection_instance.push(0);
 					//vector<pair<Matrix3d, Vector3d>> pts_vis;
 
-					vector<int> same_cluster_flag; // for bi-directional mathching
+					vector<int> same_cluster_flag; // 双向匹配
 
-					if (iter_class->second[i]->frozen)
+					if (iter_class->second[i]->frozen)// 如果补丁被冻结，则将其标记为无效
 					{
 						intersection_flag[0] = 1;
 					}
 					else
 					{
-						// Clustering the line segments.
+						// 对于每个补丁，遍历其附近的补丁
 						while (new_intersection_instance.size() > 0)
 						{
 							int cur_id = new_intersection_instance.front();
@@ -1022,10 +1074,10 @@ int RoadInstancePatchMap::mergePatches(const SensorConfig& config, const int mod
 
 											this_dist = (iter_class->second[indice[cur_id]]->line_points_metric[m] - iter_class->second[indice[j]]->line_points_metric[n]).norm();
 											this_dist_across = fabs((iter_class->second[indice[cur_id]]->line_points_metric[m] - iter_class->second[indice[j]]->line_points_metric[n]).dot(
-												Vector3d(-direction_m_local(1), direction_m_local(0), direction_m_local(2))));
+												Vector3d(-direction_m_local(1), direction_m_local(0), direction_m_local(2))));//计算两个点之间的距离
 											this_dist_across2 = fabs((iter_class->second[indice[cur_id]]->line_points_metric[m] - iter_class->second[indice[j]]->line_points_metric[n]).dot(
 												Vector3d(-direction_n_local(1), direction_n_local(0), direction_n_local(2))));
-											this_costheta = fabs(direction_m_local.dot(direction_n_local));
+											this_costheta = fabs(direction_m_local.dot(direction_n_local));//计算两个点之间的夹角
 											if (this_dist < min_dist)
 											{
 												min_dist = this_dist;
@@ -1044,7 +1096,7 @@ int RoadInstancePatchMap::mergePatches(const SensorConfig& config, const int mod
 								{
 									if (cluster_flag[indice[j]] != -1) // Bidirectinal matching!!!!
 									{
-										same_cluster_flag.push_back(cluster_flag[indice[j]]);
+										same_cluster_flag.push_back(cluster_flag[indice[j]]);//计算补丁的相似性，并根据相似性聚类和合并补丁
 										continue;
 									}
 									new_intersection_instance.push(j);
@@ -1079,6 +1131,7 @@ int RoadInstancePatchMap::mergePatches(const SensorConfig& config, const int mod
 				}
 			}
 			auto opt_t1 = chrono::system_clock::now();
+            // 将补丁聚类
 			for (int i = 0; i < iter_class->second.size(); i++)
 			{
 				if (cluster_flag[i] != -1)
@@ -1098,41 +1151,41 @@ int RoadInstancePatchMap::mergePatches(const SensorConfig& config, const int mod
 				if (all_patches_this_cluster.size() < 1) continue;
 				shared_ptr<RoadInstancePatch> line_est;
 
-				auto ret = LineCluster2SingleLine(iter_class->first, all_patches_this_cluster, line_est, Rwv);
+				auto ret = LineCluster2SingleLine(iter_class->first, all_patches_this_cluster, line_est, Rwv);//将聚类的补丁合并为一条线
 
 				if (ret < 0) continue;
 
 
-				patches_new[iter_class->first].push_back(line_est);
+				patches_new[iter_class->first].push_back(line_est);//将合并后的补丁添加到新的补丁集合中
 
 
 			}
 		}
 		auto end = chrono::system_clock::now();
 	}
-	patches = patches_new;
+	patches = patches_new;//更新补丁集合
 
-	if (mode == 0)
+	if (mode == 0)// 如果模式为0，则刷新链接帧
 	{
 		//** Refreshing linked frames
-		// This is used for geo-registering.
+		// 刷新链接帧，用于地理注册
 		for (auto iter_class = patches.begin(); iter_class != patches.end(); iter_class++)
 		{
 			for (int i = 0; i < iter_class->second.size(); i++)
 			{
 				auto& patch = iter_class->second[i];
 
-				if (patch->frozen) continue;
+				if (patch->frozen) continue;// 如果补丁被冻结，则跳过
 
 				if (iter_class->first == PatchType::DASHED || iter_class->first == PatchType::GUIDE)
 				{
-					patch->linked_frames.clear();
+					patch->linked_frames.clear();// 清空链接帧
 					patch->linked_frames.resize(1);
 					for (auto iter_pose = queued_poses.lower_bound(queued_poses.rbegin()->first - 200); iter_pose != queued_poses.end(); iter_pose++)
 					{
 						Eigen::Vector3d tvf = iter_pose->second.first.transpose() *
 							(patch->mean_metric - iter_pose->second.second);
-						if (tvf.x() < 10 && tvf.x() > -10 && tvf.y() > 2 && tvf.y() < 20) // in the region
+						if (tvf.x() < 10 && tvf.x() > -10 && tvf.y() > 2 && tvf.y() < 20) // 判断是否在区域内
 						{
 							patch->linked_frames[0].push_back(iter_pose->first);
 						}
@@ -1154,7 +1207,7 @@ int RoadInstancePatchMap::mergePatches(const SensorConfig& config, const int mod
 								(patch->line_points_metric[jjj] - iter_pose->second.second);
 							if (tvf.x() < 10 && tvf.x() > -10 && tvf.y() > 2 && tvf.y() < 20) // in the region
 							{
-								patch->linked_frames[jjj].push_back(iter_pose->first);
+								patch->linked_frames[jjj].push_back(iter_pose->first);// 将帧添加到链接帧中
 							}
 						}
 					}
@@ -1163,9 +1216,9 @@ int RoadInstancePatchMap::mergePatches(const SensorConfig& config, const int mod
 			}
 		}
 
-		// Attention!!!
-		// We simply freeze old lines to avoid troublesome cases.
-		// This could be optimized.
+        // 注意!!!
+        // 我们简单地冻结旧线以避免麻烦的情况。
+        // 这可以被优化。
 		for (auto iter_class = patches.begin(); iter_class != patches.end(); iter_class++)
 		{
 			for (int i = 0; i < iter_class->second.size(); i++)
@@ -1174,10 +1227,10 @@ int RoadInstancePatchMap::mergePatches(const SensorConfig& config, const int mod
 				if (iter_class->first == PatchType::SOLID || iter_class->first == PatchType::STOP)
 					if ((Rwv.transpose() * (patch->line_points_metric.back() - twv)).y() < -config.mapping_line_freeze_distance ||
 						patch->line_points_metric.size() > config.mapping_line_freeze_max_length || twv == Vector3d::Zero())
-						patch->frozen = true;
+						patch->frozen = true;// 冻结条件：补丁线点的y坐标小于阈值，或者补丁长度大于最大长度，或者平移向量为零
 				if (iter_class->first == PatchType::DASHED || iter_class->first == PatchType::GUIDE)
 					if ((Rwv.transpose() * (patch->mean_metric - twv)).y() < -config.mapping_line_freeze_distance)
-						patch->frozen = true;
+						patch->frozen = true;// 冻结条件：补丁平均点的y坐标小于阈值
 			}
 		}
 	}

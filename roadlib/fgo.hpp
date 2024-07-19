@@ -14,9 +14,9 @@
 #include <Eigen/Dense>
 
 /**
-* @brief inverse quaternion
-* @param[in] q[4]				origin quaternion
-* @param[in] q_inverse[4]		inversed quaternion
+* @brief 计算给定四元数的逆四元数。逆四元数的实部与原始四元数相同，虚部取负值
+* @param[in] q[4]				原始四元数
+* @param[in] q_inverse[4]		逆四元数
 */
 template <typename T> inline
 void QuaternionInverse(const T q[4], T q_inverse[4])
@@ -27,11 +27,19 @@ void QuaternionInverse(const T q[4], T q_inverse[4])
 	q_inverse[3] = -q[3];
 };
 
-/**
-*@brief RelativeRTError Structure for constructing relative pose transformation error factor
-*/
+
 struct RelativeRTError
 {
+	/// @brief RelativeRTError结构体用于构建相对位姿变换误差因子
+	/// @param t_x 平移向量x
+	/// @param t_y 平移向量y
+	/// @param t_z 平移向量z
+	/// @param q_w 四元数
+	/// @param q_x 四元数
+	/// @param q_y 四元数
+	/// @param q_z 四元数
+	/// @param t_var 平移的方差
+	/// @param q_var 旋转的方差
 	RelativeRTError(double t_x, double t_y, double t_z,
 		double q_w, double q_x, double q_y, double q_z,
 		double t_var, double q_var)
@@ -42,6 +50,7 @@ struct RelativeRTError
 	template <typename T>
 	bool operator()(const T* const w_q_i, const T* ti, const T* w_q_j, const T* tj, T* residuals) const
 	{
+		//根据输入的位姿信息，计算两个位姿之间的相对变换，在w坐标系下
 		T t_w_ij[3];
 		t_w_ij[0] = tj[0] - ti[0];
 		t_w_ij[1] = tj[1] - ti[1];
@@ -51,9 +60,9 @@ struct RelativeRTError
 		QuaternionInverse(w_q_i, i_q_w);
 
 		T t_i_ij[3];
-		ceres::QuaternionRotatePoint(i_q_w, t_w_ij, t_i_ij);
+		ceres::QuaternionRotatePoint(i_q_w, t_w_ij, t_i_ij);//使用四元数逆旋转t_w_ij到t_i_ij下，
 
-		residuals[0] = (t_i_ij[0] - T(t_x)) / T(t_var);
+		residuals[0] = (t_i_ij[0] - T(t_x)) / T(t_var);//然后计算平移的误差
 		residuals[1] = (t_i_ij[1] - T(t_y)) / T(t_var);
 		residuals[2] = (t_i_ij[2] - T(t_z)) / T(t_var);
 
@@ -64,15 +73,15 @@ struct RelativeRTError
 		relative_q[3] = T(q_z);
 
 		T q_i_j[4];
-		ceres::QuaternionProduct(i_q_w, w_q_j, q_i_j);
+		ceres::QuaternionProduct(i_q_w, w_q_j, q_i_j);//计算两个四元数的乘积
 
 		T relative_q_inv[4];
 		QuaternionInverse(relative_q, relative_q_inv);
 
 		T error_q[4];
-		ceres::QuaternionProduct(relative_q_inv, q_i_j, error_q);
+		ceres::QuaternionProduct(relative_q_inv, q_i_j, error_q);//计算误差四元数
 
-		residuals[3] = T(2) * error_q[1] / T(q_var);
+		residuals[3] = T(2) * error_q[1] / T(q_var);//然后计算旋转的误差
 		residuals[4] = T(2) * error_q[2] / T(q_var);
 		residuals[5] = T(2) * error_q[3] / T(q_var);
 
@@ -84,7 +93,7 @@ struct RelativeRTError
 		const double t_var, const double q_var)
 	{
 		return (new ceres::AutoDiffCostFunction<
-			RelativeRTError, 6, 4, 3, 4, 3>(
+			RelativeRTError, 6, 4, 3, 4, 3>(// 使用自动求导，将定义的代价函数结构体传入。第一个参数是代价函数的维度，第二个参数是待优化参数的维度（operator的维度）
 				new RelativeRTError(t_x, t_y, t_z, q_w, q_x, q_y, q_z, t_var, q_var)));
 	}
 
@@ -96,6 +105,13 @@ struct RelativeRTError
 
 struct MapPointSelfFactor
 {
+	/// @brief 构建地图点自身误差因子
+	/// @param w_t_p_x 地图点在世界坐标系下的位置
+	/// @param w_t_p_y 
+	/// @param w_t_p_z 
+	/// @param tx_var 位置的方差
+	/// @param ty_var 
+	/// @param tz_var 
 	MapPointSelfFactor(double w_t_p_x, double w_t_p_y, double w_t_p_z,
 		double tx_var, double ty_var, double tz_var)
 		: w_t_p_x(w_t_p_x), w_t_p_y(w_t_p_y), w_t_p_z(w_t_p_z),
@@ -106,7 +122,7 @@ struct MapPointSelfFactor
 	template <typename T>
 	bool operator()(const T* w_t_p, T* residuals) const
 	{
-		residuals[0] = (w_t_p[0] - T(w_t_p_x))/T(tx_var);
+		residuals[0] = (w_t_p[0] - T(w_t_p_x))/T(tx_var);//计算地图点在世界坐标系下的位置与输入位置的差异
 		residuals[1] = (w_t_p[1] - T(w_t_p_y))/T(ty_var);
 		residuals[2] = (w_t_p[2] - T(w_t_p_z))/T(tz_var);
 		return true;
@@ -123,6 +139,13 @@ struct MapPointSelfFactor
 
 struct MapPointToFramePointFactor
 {
+	/// @brief 构建地图点到相机坐标系下点的误差因子
+	/// @param i_t_p_x 相机坐标系下点的位置
+	/// @param i_t_p_y 
+	/// @param i_t_p_z 
+	/// @param tx_var 位置的方差
+	/// @param ty_var 
+	/// @param tz_var 
 	MapPointToFramePointFactor(double i_t_p_x, double i_t_p_y, double i_t_p_z,
 		double tx_var, double ty_var, double tz_var)
 		: i_t_p_x(i_t_p_x), i_t_p_y(i_t_p_y), i_t_p_z(i_t_p_z),
@@ -142,7 +165,7 @@ struct MapPointToFramePointFactor
 		QuaternionInverse(w_q_i, i_q_w);
 
 		T i_t_ip[3];
-		ceres::QuaternionRotatePoint(i_q_w, w_t_ip, i_t_ip);
+		ceres::QuaternionRotatePoint(i_q_w, w_t_ip, i_t_ip);//计算地图点在相机坐标系下的位置与输入位置的差异
 
 		residuals[0] = (i_t_ip[0] - T(i_t_p_x)) / T(tx_var);
 		residuals[1] = (i_t_ip[1] - T(i_t_p_y)) / T(ty_var);
@@ -163,6 +186,13 @@ struct MapPointToFramePointFactor
 
 struct MapLineToFramePointFactor
 {
+	/// @brief 构建地图线到相机坐标系下点的误差因子
+	/// @param i_t_p_x 相机坐标系下点的位置
+	/// @param i_t_p_y 
+	/// @param i_t_p_z 
+	/// @param tx_var 位置的方差
+	/// @param ty_var 
+	/// @param tz_var 
 	MapLineToFramePointFactor(double i_t_p_x, double i_t_p_y, double i_t_p_z,
 		double tx_var, double ty_var, double tz_var)
 		: i_t_p_x(i_t_p_x), i_t_p_y(i_t_p_y), i_t_p_z(i_t_p_z),
@@ -176,14 +206,14 @@ struct MapLineToFramePointFactor
 	{
 		T i_q_w[4];
 		QuaternionInverse(w_q_i, i_q_w);
-
+		//根据相机位姿和地图线两端点位置
 		T w_t_ip0[3];
 		w_t_ip0[0] = w_t_p0[0] - w_t_i[0];
 		w_t_ip0[1] = w_t_p0[1] - w_t_i[1];
 		w_t_ip0[2] = w_t_p0[2] - w_t_i[2];
 
 		T i_t_ip0[3];
-		ceres::QuaternionRotatePoint(i_q_w, w_t_ip0, i_t_ip0);
+		ceres::QuaternionRotatePoint(i_q_w, w_t_ip0, i_t_ip0);//计算地图线端点在相机坐标系下的位置
 
 		T w_t_ip1[3];
 		w_t_ip1[0] = w_t_p1[0] - w_t_i[0];
@@ -191,24 +221,24 @@ struct MapLineToFramePointFactor
 		w_t_ip1[2] = w_t_p1[2] - w_t_i[2];
 
 		T i_t_ip1[3];
-		ceres::QuaternionRotatePoint(i_q_w, w_t_ip1, i_t_ip1);
+		ceres::QuaternionRotatePoint(i_q_w, w_t_ip1, i_t_ip1);//计算地图线端点在相机坐标系下的位置
 
-		T Dxlj = i_t_ip1[0] - i_t_ip0[0];
+		T Dxlj = i_t_ip1[0] - i_t_ip0[0];//计算地图线的方向向量
 		T Dylj = i_t_ip1[1] - i_t_ip0[1];
 		T Dzlj = i_t_ip1[2] - i_t_ip0[2];
 
-		T Dxli = T(i_t_p_x) - i_t_ip0[0];
+		T Dxli = T(i_t_p_x) - i_t_ip0[0];//计算地图线端点到相机坐标系下点的向量
 		T Dyli = T(i_t_p_y) - i_t_ip0[1];
 		T Dzli = T(i_t_p_z) - i_t_ip0[2];
 
-		T a = Dylj * Dzli - Dzlj * Dyli;
+		T a = Dylj * Dzli - Dzlj * Dyli;//计算地图线端点到相机坐标系下点的向量与地图线的方向向量的叉乘，得到垂直于地图线的向量
 		T b = Dzlj * Dxli - Dxlj * Dzli;
 		T c = Dxlj * Dyli - Dylj * Dxli;
 
-		T Dvljxvli = pow((a*a + b * b + c * c), 0.5);
-		T Dvlj = pow(Dxlj*Dxlj + Dylj * Dylj + Dzlj * Dzlj, 0.5);
+		T Dvljxvli = pow((a*a + b * b + c * c), 0.5);//计算垂直于地图线的向量的模
+		T Dvlj = pow(Dxlj*Dxlj + Dylj * Dylj + Dzlj * Dzlj, 0.5);//计算地图线的长度
 		T vvar = pow((T(tx_var)*T(tx_var) + T(ty_var)*T(ty_var) + T(tz_var)*T(tz_var)), 0.5);
-		residuals[0] = Dvljxvli/Dvlj  / vvar;
+		residuals[0] = Dvljxvli/Dvlj  / vvar;//计算地图线端点到相机坐标系下点的向量与地图线的方向向量的叉乘的模与地图线的长度的比值
 		//T vvar = pow((T(tx_var)*T(tx_var) + T(ty_var)*T(ty_var) + T(tz_var)*T(tz_var)), 0.5);
 		//residuals[0] = Dvljxvli/Dvlj;
 		//T xxx = (i_t_ip1[0] - i_t_ip0[0]) / (i_t_ip1[1] - i_t_ip0[1])*(T(i_t_p_y) - i_t_ip0[1]);
@@ -276,6 +306,20 @@ struct MapLineToFramePointFactor
 
 struct RelativeRTVarError
 {
+	/// @brief 
+	/// @param t_x 平移向量
+	/// @param t_y 
+	/// @param t_z 
+	/// @param q_w 四元数
+	/// @param q_x 
+	/// @param q_y 
+	/// @param q_z 
+	/// @param tx_var 位置的方差
+	/// @param ty_var 
+	/// @param tz_var 
+	/// @param qx_var 旋转的方差
+	/// @param qy_var 
+	/// @param qz_var 
 	RelativeRTVarError(double t_x, double t_y, double t_z,
 		double q_w, double q_x, double q_y, double q_z,
 		double tx_var, double ty_var, double tz_var,
@@ -288,6 +332,7 @@ struct RelativeRTVarError
 	template <typename T>
 	bool operator()(const T* const w_q_i, const T* ti, const T* w_q_j, const T* tj, T* residuals) const
 	{
+		//类似于RelativeRTError，但在计算误差时考虑了位置和旋转的方差
 		T t_w_ij[3];
 		t_w_ij[0] = tj[0] - ti[0];
 		t_w_ij[1] = tj[1] - ti[1];
@@ -347,6 +392,20 @@ struct RelativeRTVarError
 */
 struct PoseVarError
 {
+	/// @brief 构建姿态误差因子，考虑位置和旋转的方差
+	/// @param t_x 平移向量
+	/// @param t_y 
+	/// @param t_z 
+	/// @param q_w 四元数
+	/// @param q_x 
+	/// @param q_y 
+	/// @param q_z 
+	/// @param tx_var 位置的方差
+	/// @param ty_var 
+	/// @param tz_var 
+	/// @param qx_var 旋转的方差
+	/// @param qy_var 
+	/// @param qz_var 
 	PoseVarError(double t_x, double t_y, double t_z,
 		double q_w, double q_x, double q_y, double q_z,
 		double tx_var, double ty_var, double tz_var,
@@ -359,6 +418,7 @@ struct PoseVarError
 	template <typename T>
 	bool operator()(const T* const w_q_i, const T* ti, T* residuals) const
 	{
+		//类似于RelativeRTError，但是用于单个位姿的误差计算，考虑了位置和旋转的方差。
 		residuals[0] = (ti[0] - T(t_x)) / T(tx_var);
 		residuals[1] = (ti[1] - T(t_y)) / T(ty_var);
 		residuals[2] = (ti[2] - T(t_z)) / T(tz_var);
@@ -406,6 +466,23 @@ struct PoseVarError
 
 struct PoseLeverVarError
 {
+	/// @brief 构建带杠杆的姿态误差因子，考虑位置和旋转的方差
+	/// @param t_x 平移向量
+	/// @param t_y 
+	/// @param t_z 
+	/// @param q_w 四元数
+	/// @param q_x 
+	/// @param q_y 
+	/// @param q_z 
+	/// @param tx_var 位置的方差
+	/// @param ty_var 
+	/// @param tz_var 
+	/// @param qx_var 旋转的方差
+	/// @param qy_var 
+	/// @param qz_var 
+	/// @param lx 杠杆向量
+	/// @param ly 
+	/// @param lz 
 	PoseLeverVarError(double t_x, double t_y, double t_z,
 		double q_w, double q_x, double q_y, double q_z,
 		double tx_var, double ty_var, double tz_var,
@@ -420,6 +497,7 @@ struct PoseLeverVarError
 	template <typename T>
 	bool operator()(const T* const w_q_i, const T* ti, T* residuals) const
 	{
+		//类似于PoseVarError，但在计算误差时考虑了杠杆向量。
 		T obser_q[4];
 		obser_q[0] = T(q_w);
 		obser_q[1] = T(q_x);
@@ -482,6 +560,16 @@ struct PoseLeverVarError
 */
 struct PoseError
 {
+	/// @brief 构建姿态误差因子
+	/// @param t_x 平移向量
+	/// @param t_y 
+	/// @param t_z 
+	/// @param q_w 四元数
+	/// @param q_x 
+	/// @param q_y 
+	/// @param q_z 
+	/// @param t_var 位置的方差
+	/// @param q_var 旋转的方差
 	PoseError(double t_x, double t_y, double t_z,
 		double q_w, double q_x, double q_y, double q_z,
 		double t_var, double q_var)
@@ -512,7 +600,7 @@ struct PoseError
 		QuaternionInverse(obser_q, obser_q_inv);
 
 		T error_q[4];
-		ceres::QuaternionProduct(obser_q_inv, q_i, error_q);
+		ceres::QuaternionProduct(obser_q_inv, q_i, error_q);//计算误差四元数
 
 		residuals[3] = T(2) * error_q[1] / T(q_var);
 		residuals[4] = T(2) * error_q[2] / T(q_var);

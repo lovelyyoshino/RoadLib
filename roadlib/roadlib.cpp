@@ -15,31 +15,40 @@ long long RoadInstancePatch::next_id = 0;
 long long RoadInstancePatchFrame::next_id = 0;
 
 vector<RoadInstancePatch> patches_temp;
-
+/// @brief 对图像中的语义标签进行聚类，并计算每个聚类的统计信息（如面积和中心点）
+/// @param ipm_semantic 输入的语义图像
+/// @param ipm_label 输出的标签图像
+/// @param stats 输出的统计信息，包含每个聚类的面积、边界框等
+/// @param centroids 输出的聚类中心点
+/// @return 
 int LabelClustering(const cv::Mat& ipm_semantic, cv::Mat& ipm_label, cv::Mat& stats, cv::Mat& centroids)
 {
 	cv::Mat ipm_label_stop, stats_stop, centroids_stop;
 	cv::Mat ipm_semantic_temp;
 	ipm_semantic.copyTo(ipm_semantic_temp);
 	cv::Mat ipm_semantic_stop = cv::Mat::zeros(ipm_semantic.size(), CV_8UC1);
-	ipm_semantic_stop.setTo(255, ipm_semantic == 5);
-	ipm_semantic_temp.setTo(0, ipm_semantic == 5);
-
-	cv::connectedComponentsWithStats(ipm_semantic_temp, ipm_label, stats, centroids, 4, CV_16U);
-	cv::connectedComponentsWithStats(ipm_semantic_stop, ipm_label_stop, stats_stop, centroids_stop, 4, CV_16U);
+	ipm_semantic_stop.setTo(255, ipm_semantic == 5);//将所有值为5的像素设置为255，以便单独处理停车线
+	ipm_semantic_temp.setTo(0, ipm_semantic == 5);//将所有值为5的像素设置为0，以便排除不需要的语义类别
+	// https://blog.csdn.net/qq_40784418/article/details/106023288：stats：表示每一个标记的统计信息，是一个5列的矩阵，每一行对应每个连通区域的外接矩形的x、y、width、height和面积，示例如下： 0 0 720 720 291805
+	cv::connectedComponentsWithStats(ipm_semantic_temp, ipm_label, stats, centroids, 4, CV_16U);//对除停车线外的语义类别进行聚类，得到另一个标签图像、统计信息和中心点
+	cv::connectedComponentsWithStats(ipm_semantic_stop, ipm_label_stop, stats_stop, centroids_stop, 4, CV_16U);//对停车线进行聚类，得到另一个标签图像、统计信息和中心点
 	cv::Mat stats_all, centroids_all;
-	if (stats_stop.rows > 1)
+	if (stats_stop.rows > 1)//如果停车线聚类的数量大于1
 	{
-		cv::vconcat(stats, stats_stop(cv::Rect(0, 1, stats_stop.cols, stats_stop.rows - 1)), stats);
-		cv::vconcat(centroids, centroids_stop(cv::Rect(0, 1, centroids_stop.cols, centroids_stop.rows - 1)), centroids);
+		cv::vconcat(stats, stats_stop(cv::Rect(0, 1, stats_stop.cols, stats_stop.rows - 1)), stats);//将停车线聚类的统计信息拼接到所有聚类的统计信息中
+		cv::vconcat(centroids, centroids_stop(cv::Rect(0, 1, centroids_stop.cols, centroids_stop.rows - 1)), centroids);//将停车线聚类的中心点拼接到所有聚类的中心点中
 	}
-	for (int i = 1; i < stats_stop.rows; i++)
+	for (int i = 1; i < stats_stop.rows; i++)//将停车线聚类的标签值设置为停车线的标签值，然后将第二个标签图像的标签映射到第一个标签图像的索引上
 	{
 		ipm_label.setTo(stats.rows - stats_stop.rows + i, ipm_label_stop == i);
 	}
 	return 0;
 }
-
+/// @brief 计算了图像处理过程中的不确定性，通常用于估计图像重建或特征提取的误差
+/// @param ipm IPM预处理信息，包含图像处理的配置和参数
+/// @param uI 图像中的像素坐标u，是横坐标
+/// @param vI 图像中的像素坐标v，是纵坐标
+/// @return 
 Matrix3d calcUncertainty(const gv::IPMProcesser& ipm, double uI, double vI)
 {
 
@@ -55,25 +64,25 @@ Matrix3d calcUncertainty(const gv::IPMProcesser& ipm, double uI, double vI)
 		0.0, reso_temp, -(ipm._config.IPM_HEIGHT - 1) * reso_temp,
 		0.0, 0.0, d;
 
-	Eigen::Matrix3d K_IPM = K_IPM_i_d.inverse() * d;
+	Eigen::Matrix3d K_IPM = K_IPM_i_d.inverse() * d;//给出IPM矩阵
 
 	Vector3d xyI, xy;
 	double xI, yI, x, y;
 	Eigen::MatrixXd F, F1, F2, F3;
-	xyI = K_IPM.inverse() * Vector3d(uI, vI, 1);
+	xyI = K_IPM.inverse() * Vector3d(uI, vI, 1);//将像素坐标转换为归一化坐标xyI
 	xI = xyI(0); yI = xyI(1);
-	y = -1 / yI; x = xI * y;
+	y = -1 / yI; x = xI * y;//将归一化坐标转换为像素坐标
 
 	// Pixel error.
-	F1 = (Eigen::MatrixXd(2, 2) << d / reso_temp, 0, 0, d / reso_temp).finished();
+	F1 = (Eigen::MatrixXd(2, 2) << d / reso_temp, 0, 0, d / reso_temp).finished();//给出像素误差的F矩阵
 	F2 = (Eigen::MatrixXd(2, 2) << 1 / y, -x / y / y, 0, 1 / y / y).finished();
 	F3 = (Eigen::MatrixXd(2, 2) << 1 / fx, 0, 0, 1 / fy).finished();
-	F = F1 * F2 * F3;
+	F = F1 * F2 * F3;//计算像素误差的F矩阵
 	MatrixXd var_pixel = (Eigen::MatrixXd(2, 2) << 2, 0, 0, 2).finished();
 	var_pixel = var_pixel * var_pixel;
-	Matrix2d var_pixel_error = F * var_pixel * F.transpose(); // (in pixels)
+	Matrix2d var_pixel_error = F * var_pixel * F.transpose(); //计算像素误差的协方差矩阵
 
-	// Pitch error.
+	// 计算俯仰角误差的协方差矩阵
 	F1 = (Eigen::MatrixXd(2, 2) << d / reso_temp, 0, 0, d / reso_temp).finished();
 	F2 = (Eigen::MatrixXd(2, 1) << x / y / y, (1 + y * y) / (y * y)).finished();
 	F = F1 * F2;
@@ -81,7 +90,7 @@ Matrix3d calcUncertainty(const gv::IPMProcesser& ipm, double uI, double vI)
 	var_pitch = var_pitch * var_pitch;
 	Matrix2d var_pitch_error = F * var_pitch * F.transpose(); // (in pixels)
 
-	// Height error.
+	// 计算高度误差的协方差矩阵
 	F = (Eigen::MatrixXd(2, 1) << xI / reso_temp, yI / reso_temp).finished();
 	double var_D = 0.05;
 	var_D = var_D * var_D;
@@ -89,16 +98,21 @@ Matrix3d calcUncertainty(const gv::IPMProcesser& ipm, double uI, double vI)
 
 	Matrix3d uncertainty = Matrix3d::Identity(3, 3);
 	uncertainty.block(0, 0, 2, 2) = (var_pixel_error + var_pitch_error + var_D_error) * (reso_temp * reso_temp);
-	uncertainty(2, 2) = pow((0.5 * sqrt(uncertainty(1, 1))), 2);
+	uncertainty(2, 2) = pow((0.5 * sqrt(uncertainty(1, 1))), 2);//将这些误差矩阵组合成一个3x3的不确定性矩阵
 	return uncertainty;
 }
-
+/// @brief 生成度量空间中的patch，这个是针对一帧的处理
+/// @param config 传感器配置信息的引用
+/// @param ipm gv::IPMProcesser对象的引用
+/// @param ipm_raw 包含原始IPM图像的OpenCV矩阵
+/// @param ipm_class 包含IPM类别信息的OpenCV矩阵
+/// @return 
 RoadInstancePatchFrame generateInstancePatch(const SensorConfig& config, const gv::IPMProcesser& ipm, const cv::Mat& ipm_raw, const cv::Mat& ipm_class)
 {
 	cv::Mat ipm_instance, stats, centroids;
-	LabelClustering(ipm_class, ipm_instance, stats, centroids);
+	LabelClustering(ipm_class, ipm_instance, stats, centroids);//对ipm_class进行标签聚类，得到ipm_instance、stats和centroids
 
-	// Initialize the frame.
+	// 初始化RoadInstancePatchFrame对象，对应一帧当中的元素特征
 	RoadInstancePatchFrame frame;
 	frame.patches[PatchType::SOLID] = vector<shared_ptr<RoadInstancePatch>>();
 	frame.patches[PatchType::DASHED] = vector<shared_ptr<RoadInstancePatch>>();
@@ -106,12 +120,12 @@ RoadInstancePatchFrame generateInstancePatch(const SensorConfig& config, const g
 	frame.patches[PatchType::ZEBRA] = vector<shared_ptr<RoadInstancePatch>>();
 	frame.patches[PatchType::STOP] = vector<shared_ptr<RoadInstancePatch>>();
 
-	patches_temp = vector<RoadInstancePatch>(centroids.rows);
+	patches_temp = vector<RoadInstancePatch>(centroids.rows);//初始化对应patch信息
 	vector<int> patches_count(centroids.rows);
 
 	for (int i = 0; i < centroids.rows; i++)
 	{
-		patches_temp[i].points.resize(stats.at<int>(i, cv::CC_STAT_AREA));
+		patches_temp[i].points.resize(stats.at<int>(i, cv::CC_STAT_AREA));//对应mat下输出的统计信息，设置patch的点数
 		patches_temp[i].top = stats.at<int>(i, cv::CC_STAT_TOP);
 		patches_temp[i].left = stats.at<int>(i, cv::CC_STAT_LEFT);
 		patches_temp[i].width = stats.at<int>(i, cv::CC_STAT_WIDTH);
@@ -122,44 +136,44 @@ RoadInstancePatchFrame generateInstancePatch(const SensorConfig& config, const g
 	uint16_t cur_label;
 	for (int i = 0; i < ipm_instance.rows; i++)
 	{
-		for (int j = 0; j < ipm_instance.cols; j++)
+		for (int j = 0; j < ipm_instance.cols; j++)//遍历ipm_instance，根据标签将像素点添加到对应的patches_temp中
 		{
-			cur_label = ipm_instance.at<uint16_t>(i, j);
-			patches_temp[cur_label].points[patches_count[cur_label]] = Eigen::Vector3d(j, i, 1);
-			patches_temp[cur_label].road_class_count[gray2class(ipm_class.at<uchar>(i, j))]++;
-			if (cur_label > 0)
+			cur_label = ipm_instance.at<uint16_t>(i, j);//获取当前像素点的标签
+			patches_temp[cur_label].points[patches_count[cur_label]] = Eigen::Vector3d(j, i, 1);//将像素点添加到对应的patch中
+			patches_temp[cur_label].road_class_count[gray2class(ipm_class.at<uchar>(i, j))]++;//统计每个patch中的语义类别
+			if (cur_label > 0)//判断是否在边界上
 			{
 				if (i + 1 >= ipm_instance.rows || j <= 0 || j >= ipm_instance.cols - 1 ||
 					ipm_raw.at<cv::Vec3b>(i + 1, j) == cv::Vec3b(0, 0, 0) ||
 					ipm_raw.at<cv::Vec3b>(i + 1, j - 1) == cv::Vec3b(0, 0, 0) ||
 					ipm_raw.at<cv::Vec3b>(i + 1, j + 1) == cv::Vec3b(0, 0, 0))
 				{
-					patches_temp[cur_label].out_range = true;
+					patches_temp[cur_label].out_range = true;//如果在边界上，将out_range设置为true
 				}
 			}
-			patches_count[cur_label]++;
+			patches_count[cur_label]++;//访问下一个像素点
 		}
 	}
 	for (int i = 0; i < patches_temp.size(); i++)
 	{
-		assert(patches_temp[i].points.size() == patches_count[i]);
+		assert(patches_temp[i].points.size() == patches_count[i]);//检查patch的点数是否和统计信息中的点数一致
 	}
 
-	// Clean redundant patches.
+	// 清除冗余的补丁
 	auto it = patches_temp.begin();
 	while (it != patches_temp.end()) {
 		int max_class_count = 0;
 		PatchType max_class = PatchType::EMPTY;
-		for (auto class_it : it->road_class_count)
+		for (auto class_it : it->road_class_count)//遍历patch中的语义类别
 		{
-			if (class_it.second > max_class_count)
+			if (class_it.second > max_class_count)//找到出现次数最多的语义类别
 			{
 				max_class_count = class_it.second;
 				max_class = class_it.first;
 			}
 		}
-		it->road_class = max_class;
-		if (max_class == PatchType::EMPTY)
+		it->road_class = max_class;//将patch的road_class设置为出现次数最多的语义类别
+		if (max_class == PatchType::EMPTY)//如果没有语义类别，将patch删除
 		{
 			it = patches_temp.erase(it);
 			continue;
@@ -169,7 +183,7 @@ RoadInstancePatchFrame generateInstancePatch(const SensorConfig& config, const g
 		if (it->points.size() < config.patch_min_size
 			|| (it->road_class == PatchType::DASHED && out_range)
 			|| (it->road_class == PatchType::GUIDE && out_range)
-			)
+			)//如果patch的点数小于最小点数，或者是虚线且在边界上，或者是引导线且在边界上，将patch删除
 		{
 			it = patches_temp.erase(it);
 			continue;
@@ -177,7 +191,7 @@ RoadInstancePatchFrame generateInstancePatch(const SensorConfig& config, const g
 		it++;
 	}
 
-	// Calculate patch characteristics.
+	// 计算每个补丁的特征值，如均值、协方差、特征向量等
 	for (int i = 0; i < patches_temp.size(); i++)
 	{
 		auto& patch = patches_temp[i];
@@ -189,44 +203,43 @@ RoadInstancePatchFrame generateInstancePatch(const SensorConfig& config, const g
 		{
 			patch.mean += patch.points[j];
 		}
-		patch.mean /= patch.points.size();
+		patch.mean /= patch.points.size();//对于每个patch，将其所有点相加得到均值
 
 		for (int j = 0; j < patch.points.size(); j++)
 		{
 			vector_temp = patch.points[j] - patch.mean;
-			patch.cov += vector_temp * vector_temp.transpose();
+			patch.cov += vector_temp * vector_temp.transpose();//计算每个点与均值的差值，更新协方差矩阵
 		}
 		patch.cov /= patch.points.size();
 
-		JacobiSVD<Eigen::MatrixXd> svd(patch.cov, ComputeThinU | ComputeThinV);
+		JacobiSVD<Eigen::MatrixXd> svd(patch.cov, ComputeThinU | ComputeThinV);//使用JacobiSVD分解协方差矩阵，得到特征向量和特征值
 		Matrix3d V = svd.matrixV(), U = svd.matrixU();
-		Matrix3d S = U.inverse() * patch.cov * V.transpose().inverse();
+		Matrix3d S = U.inverse() * patch.cov * V.transpose().inverse();//A=UΣV'，其中U和V是两组正交单位向量，都是是对角阵，是表示奇异值
 		patch.eigen_value[0] = sqrt(S(0, 0));
 		patch.eigen_value[1] = sqrt(S(1, 1));
 		patch.eigen_value[2] = sqrt(S(2, 2));
 
-		patch.direction = U.block(0, 0, 3, 1);
-		patch.mean_uncertainty = calcUncertainty(ipm, patch.mean(0), patch.mean(1));
+		patch.direction = U.block(0, 0, 3, 1);//根据特征值计算patch的方向
+		patch.mean_uncertainty = calcUncertainty(ipm, patch.mean(0), patch.mean(1));//平均不确定性
 
 
-		// >> temporarily!!!!!
-		if (patch.direction(1) < 0) patch.direction *= -1;
-
+		if (patch.direction(1) < 0) patch.direction *= -1;//如在特征向量计算过程中，特征向量的方向是无法确定的，只有其方向的相对性是可确定的。所以在实际应用中，为了保持一致性，可以将特征向量的方向调整为统一的方向。
+        //特征值比例大于2且road_class为SOLID或STOP
 		if (patch.eigen_value[0] / patch.eigen_value[1] > 2
 			&& (patches_temp[i].road_class == PatchType::SOLID || patches_temp[i].road_class == PatchType::STOP))
 		{
-			auto points_direction = patch.points;
-			double direction_angle = atan2(patch.direction(1), patch.direction(0)) + M_PI / 2; // std::cerr << direction_angle << std::endl;
+			auto points_direction = patch.points;//获取点云
+			double direction_angle = atan2(patch.direction(1), patch.direction(0)) + M_PI / 2; //根据特征向量计算方向角度
 			Matrix3d direction_rotation;
 			direction_rotation << cos(direction_angle), sin(direction_angle), 0,
 				-sin(direction_angle), cos(direction_angle), 0,
-				0, 0, 1;
+				0, 0, 1;//根据方向角度计算旋转矩阵
 			for (int i = 0; i < points_direction.size(); i++)
 			{
-				points_direction[i] = direction_rotation * (patch.points[i] - patch.mean) + patch.mean;
+				points_direction[i] = direction_rotation * (patch.points[i] - patch.mean) + patch.mean;//将点云旋转到特征向量的方向
 			}
 
-			// Line-like point clouds to skeleton points.
+			// 将线状点云转换为骨架点
 			if (PointCloud2Curve2D(points_direction, 4, patch.line_koef) < 0)
 				patch.line_valid = false;
 			else
@@ -237,26 +250,26 @@ RoadInstancePatchFrame generateInstancePatch(const SensorConfig& config, const g
 				double min_uncertainty = 1e9;
 				double reso_temp = ipm._config.IPM_RESO;
 				for (int ll = (int)ceil(-patch.eigen_value[0] * 2 / (0.5 / reso_temp));
-					ll < patch.eigen_value[0] * 2 / (0.5 / reso_temp); ll++)
+					ll < patch.eigen_value[0] * 2 / (0.5 / reso_temp); ll++)//从patch的中心点开始，沿着特征向量的方向，计算线状点云的不确定性
 				{
-					yy = patch.mean(1) + ll * 0.5 / reso_temp;
+					yy = patch.mean(1) + ll * 0.5 / reso_temp;//计算线状点云的y坐标
 					xx = 0.0;
 					for (int i = 0; i < patch.line_koef.rows(); i++)
-						xx += pow(yy, i) * patch.line_koef(i);
-					pt_img = direction_rotation.transpose() * (Vector3d(xx, yy, 1) - patch.mean) + patch.mean;
+						xx += pow(yy, i) * patch.line_koef(i);//计算线状点云的x坐标，这个是曲线信息
+					pt_img = direction_rotation.transpose() * (Vector3d(xx, yy, 1) - patch.mean) + patch.mean;//将线状点云旋转到特征向量的方向
 
 					if (pt_img(1) > (patch.top + patch.height)) continue;
 
 					double valid_distance = 20;
-					if (patches_temp[i].road_class == PatchType::SOLID) valid_distance = config.patch_solid_max_dist;
+					if (patches_temp[i].road_class == PatchType::SOLID) valid_distance = config.patch_solid_max_dist;//根据road_class的不同，设置不同的有效距离
 					else if (patches_temp[i].road_class == PatchType::STOP) valid_distance = config.patch_stop_max_dist;
 
-					if ((ipm._config.IPM_HEIGHT - pt_img(1)) * reso_temp < valid_distance)
+					if ((ipm._config.IPM_HEIGHT - pt_img(1)) * reso_temp < valid_distance)//如果点云的y坐标小于有效距离，将点云添加到patch的线状点云中
 					{
 						patch.line_points.push_back(pt_img);
 						patch.line_points_uncertainty.push_back(calcUncertainty(ipm, pt_img(0), pt_img(1)));
 						min_uncertainty = min(min_uncertainty,
-							sqrt(patch.line_points_uncertainty.back()(0, 0) + patch.line_points_uncertainty.back()(1, 1)));
+							sqrt(patch.line_points_uncertainty.back()(0, 0) + patch.line_points_uncertainty.back()(1, 1)));//计算线状点云的不确定性
 					}
 				}
 				if (patch.line_points.size() < 2 || min_uncertainty > 1.0)
@@ -278,32 +291,31 @@ RoadInstancePatchFrame generateInstancePatch(const SensorConfig& config, const g
 			direction_field.push_back(make_pair(patch.mean, patch.direction));
 		if (patches_temp[i].road_class == PatchType::SOLID && patch.line_valid)
 			for (int ii = 0; ii < patch.line_points.size() - 1; ii++)
-				direction_field.push_back(make_pair(patch.line_points[ii], patch.line_points[ii + 1] - patch.line_points[ii]));
+				direction_field.push_back(make_pair(patch.line_points[ii], patch.line_points[ii + 1] - patch.line_points[ii]));//将线状点云的方向添加到方向场中
 	}
 
-	//** Compute bounding boxes.
-	// Use the local direction field to determine the direction of a patch-like marker.
+	//计算边界框。使用局部方向场确定补丁式标记的方向
 	for (int i = 0; i < patches_temp.size(); i++)
 	{
 		auto patch = make_shared<RoadInstancePatch>(patches_temp[i]);
 
-		if (patch->road_class == PatchType::GUIDE || patch->road_class == PatchType::DASHED)
+		if (patch->road_class == PatchType::GUIDE || patch->road_class == PatchType::DASHED)//如果是引导线或虚线
 		{
 			double min_dist = 999999;
 			int min_ii = -1;
-			for (int ii = 0; ii < direction_field.size(); ii++)
+			for (int ii = 0; ii < direction_field.size(); ii++)//计算patch的方向
 			{
-				double dist = (direction_field[ii].first - patch->mean).norm();
+				double dist = (direction_field[ii].first - patch->mean).norm();//计算patch的中心点和方向场中的点的距禙
 				if (dist < min_dist)
 				{
 					min_dist = dist;
 					min_ii = ii;
 				}
 			}
-			if (min_dist < 10000)
+			if (min_dist < 10000)//如果距离小于10000，计算patch的边界框
 			{
-				Eigen::Vector3d b_direction = direction_field[min_ii].second / direction_field[min_ii].second.norm();
-				if (b_direction(1) < 0)  b_direction *= -1;
+				Eigen::Vector3d b_direction = direction_field[min_ii].second / direction_field[min_ii].second.norm();//计算patch的方向
+				if (b_direction(1) < 0)  b_direction *= -1;//如果方向向下，将方向调整为向上
 
 				double bb= -1e9; Vector3d tt_support;
 				double tt = 1e9; Vector3d bb_support;
@@ -314,12 +326,12 @@ RoadInstancePatchFrame generateInstancePatch(const SensorConfig& config, const g
 				Matrix3d direction_rotation;
 				direction_rotation << cos(direction_angle), sin(direction_angle), 0,
 					-sin(direction_angle), cos(direction_angle), 0,
-					0, 0, 1;
+					0, 0, 1;//根据方向角度计算旋转矩阵
 
 				for (int jj = 0; jj < patch->points.size(); jj++)
 				{
-					Vector3d pt = direction_rotation.transpose() * (patch->points[jj] - patch->mean);
-					if (pt.x() < ll) { ll = pt.x(); ll_support = patch->points[jj]; }
+					Vector3d pt = direction_rotation.transpose() * (patch->points[jj] - patch->mean);//根据最小距离的方向，将patch的点云旋转到特征向量的方向
+					if (pt.x() < ll) { ll = pt.x(); ll_support = patch->points[jj]; }//计算patch的边界框
 					if (pt.x() > rr) { rr = pt.x(); rr_support = patch->points[jj]; }
 					if (pt.y() < tt) { tt = pt.y(); tt_support = patch->points[jj]; }
 					if (pt.y() > bb) { bb = pt.y(); bb_support = patch->points[jj]; }
@@ -327,12 +339,12 @@ RoadInstancePatchFrame generateInstancePatch(const SensorConfig& config, const g
 					//	std::cerr << patch->points[jj].transpose() << std::endl;
 
 				}
-				patch->b_point[0] = direction_rotation * Vector3d(ll, bb, 0) + patch->mean;
+				patch->b_point[0] = direction_rotation * Vector3d(ll, bb, 0) + patch->mean;//将patch的边界框旋转到特征向量的方向
 				patch->b_point[1] = direction_rotation * Vector3d(rr, bb, 0) + patch->mean;
 				patch->b_point[2] = direction_rotation * Vector3d(rr, tt, 0) + patch->mean;
 				patch->b_point[3] = direction_rotation * Vector3d(ll, tt, 0) + patch->mean;
 
-				Eigen::Matrix3d P0 = calcUncertainty(ipm, ll_support(0), ll_support(1));
+				Eigen::Matrix3d P0 = calcUncertainty(ipm, ll_support(0), ll_support(1));//计算patch的不确定性
 				Eigen::Matrix3d P1 = calcUncertainty(ipm, rr_support(0), rr_support(1));
 				Eigen::Matrix3d P2 = calcUncertainty(ipm, bb_support(0), bb_support(1));
 				Eigen::Matrix3d P3 = calcUncertainty(ipm, tt_support(0), tt_support(1));
@@ -387,9 +399,13 @@ RoadInstancePatchFrame generateInstancePatch(const SensorConfig& config, const g
 	return frame;
 }
 
+/// @brief 道路实例信息处理函数
+/// @param config 配置文件
+/// @param ipm IPM图
+/// @return 
 int RoadInstancePatchFrame::generateMetricPatches(const SensorConfig& config, const gv::IPMProcesser& ipm)
 {
-	auto cam = ipm._config;
+	auto cam = ipm._config;//首先使用 IPM 处理器对象获取摄像头参数 cam
 	for (auto iter_class : patches)
 	{
 		for (int i = 0; i < iter_class.second.size(); i++)
@@ -401,7 +417,7 @@ int RoadInstancePatchFrame::generateMetricPatches(const SensorConfig& config, co
 			for (int j = 0; j < patch->points.size(); j++)
 			{
 				patch->points_metric[j] = cam.tic
-					+ cam.Ric * ipm.IPM2Metric(cv::Point2f(patch->points[j].x(), patch->points[j].y()));
+					+ cam.Ric * ipm.IPM2Metric(cv::Point2f(patch->points[j].x(), patch->points[j].y()));//将patch的点云转换到度量空间
 			}
 
 			if (patch->line_valid)
@@ -430,8 +446,8 @@ int RoadInstancePatchFrame::generateMetricPatches(const SensorConfig& config, co
 			{
 				patch->mean_metric += patch->points_metric[j];
 			}
-			patch->mean_metric /= patch->points_metric.size();
-			patch->percept_distance = patch->mean_metric(1);
+			patch->mean_metric /= patch->points_metric.size();//计算补丁的平均度量
+			patch->percept_distance = patch->mean_metric(1);//计算补丁的感知距离
 
 			if (iter_class.first == PatchType::DASHED
 				&& patch->h() > config.patch_dashed_min_h
@@ -450,17 +466,20 @@ int RoadInstancePatchFrame::generateMetricPatches(const SensorConfig& config, co
 	}
 	return 0;
 }
-
+/// @brief 计算补丁的高度
+/// @return 
 double RoadInstancePatch::h() const
 {
 	return (b_point_metric[2] - b_point_metric[1]).norm();
 }
-
+/// @brief 计算补丁的宽度
+/// @return 
 double RoadInstancePatch::w() const
 {
 	return (b_point_metric[1] - b_point_metric[0]).norm();
 }
-
+/// @brief 根据不同类型的补丁计算其方向
+/// @return 
 Eigen::Vector3d RoadInstancePatch::d() const
 {
 		if (road_class == PatchType::DASHED || road_class == PatchType::GUIDE) 
@@ -473,7 +492,8 @@ Eigen::Vector3d RoadInstancePatch::d() const
 		else
 			throw exception();
 }
-
+/// @brief 从文件路径读取摄像头和传感器相关的配置参数
+/// @param path 文件路径
 SensorConfig::SensorConfig(string path)
 {
 	gv::CameraConfig conf;
